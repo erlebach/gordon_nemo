@@ -56,7 +56,7 @@ adapter:
 trainer:
   devices: 1
   num_nodes: 1
-  max_epochs: 50
+  max_epochs: 2
   precision: 32
   accelerator: auto
   strategy: auto

@@ -513,7 +513,7 @@ def main(cfg: DictConfig) -> None:
     # Set up trainer with Lightning
     # GE:  What are arguments of pl.Trainer?
     trainer = pl.Trainer(**cfg.trainer)
-    exp_manager(trainer, cfg.get("exp_manager", None))
+    # exp_manager(trainer, cfg.get("exp_manager", None))
 
     # Create model
     # GE: look into trainer in base model
