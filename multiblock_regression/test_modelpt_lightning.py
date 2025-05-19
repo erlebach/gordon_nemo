@@ -30,7 +30,8 @@ class DummyDataset(Dataset):
 
 
 # 2. Define a minimal ModelPT subclass with required abstract methods implemented
-class MinimalModelPT(ModelPT, adapter_mixins.AdapterModelPTMixin):
+# class MinimalModelPT(ModelPT, adapter_mixins.AdapterModelPTMixin):
+class MinimalModelPT(ModelPT):
     # Expect cfg to contain only model-specific parameters (like optim, arch)
     def __init__(self, cfg: DictConfig, trainer: Trainer = None):
         # Pass the model-specific config and trainer to ModelPT's init
@@ -124,14 +125,14 @@ class MinimalModelPT(ModelPT, adapter_mixins.AdapterModelPTMixin):
             logging.info("setup_test_data called with None config.")
 
     # --- LightningModule data hooks (delegates to _train_dl etc) ---
-    def train_dataloader(self):
-        return self._train_dl
+    # def train_dataloader(self):
+    #     return self._train_dl
 
-    def val_dataloader(self):
-        return self._validation_dl
+    # def val_dataloader(self):
+    #     return self._validation_dl
 
-    def test_dataloader(self):
-        return self._test_dl
+    # def test_dataloader(self):
+    #     return self._test_dl
 
     # Added test_step method
     def test_step(self, batch, batch_idx):
