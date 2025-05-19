@@ -315,7 +315,6 @@ def main(cfg: DictConfig) -> None:
 
     # Set up trainer with Lightning
     trainer = pl.Trainer(**cfg.trainer)
-    # exp_manager(trainer, cfg.get("exp_manager", None)) # Removed exp_manager call again for simplicity
 
 
     # Create model
