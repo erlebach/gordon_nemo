@@ -526,30 +526,6 @@ def main(cfg: DictConfig) -> None:
     trainer.fit(model)
     logging.info("Training completed.")
 
-    # Testing
-    if hasattr(cfg, "test_ds") and cfg.test_ds.file_path is not None:
-        # GE: Should reach this point
-        logging.info("Running testing...")
-        # GE: Lightning
-        trainer.test(model)
-
-    # Save the model if a path is specified
-    if (
-        hasattr(cfg, "io")
-        and hasattr(cfg.io, "nemo_path")
-        and cfg.io.nemo_path is not None
-    ):
-        model.save_to(cfg.io.nemo_path)
-        logging.info(f"Model saved to {cfg.io.nemo_path}")
-    elif (
-        hasattr(cfg, "model")
-        and hasattr(cfg.model, "nemo_path")
-        and cfg.model.nemo_path is not None
-    ):
-        model.save_to(cfg.model.nemo_path)
-        logging.info(f"Model saved to {cfg.model.nemo_path}")
-
-
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     main()
