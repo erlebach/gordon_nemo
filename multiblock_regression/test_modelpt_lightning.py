@@ -2,7 +2,7 @@ import sys
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import pytorch_lightning as pl
+from lightning.pytorch import Trainer, LightningModule
 import torch
 import torch.nn as nn
 from nemo.core import ModelPT
@@ -32,14 +32,16 @@ class DummyDataset(Dataset):
 # 2. Define a minimal ModelPT subclass with required abstract methods implemented
 class MinimalModelPT(ModelPT, adapter_mixins.AdapterModelPTMixin):
     # Expect cfg to contain only model-specific parameters (like optim, arch)
-    def __init__(self, cfg: DictConfig, trainer: pl.Trainer = None):
+    def __init__(self, cfg: DictConfig, trainer: Trainer = None):
         # Pass the model-specific config and trainer to ModelPT's init
-        super().__init__(cfg=cfg, trainer=trainer)
+        # The cfg passed here should be the model-specific part of the main config
+        super().__init__(cfg=cfg.model, trainer=trainer) # Pass cfg.model to the parent class
 
         # Minimal model layer - Access arch config from self.cfg
         # Using input_dim/output_dim from cfg.arch as in multiblock_train_debug
-        input_dim = cfg.arch.get("input_dim", 1) # Get from config or default
-        output_dim = cfg.arch.get("output_dim", 1) # Get from config or default
+        # Access model config from self.cfg which is now cfg.model
+        input_dim = self.cfg.arch.get("input_dim", 1) # Get from config or default
+        output_dim = self.cfg.arch.get("output_dim", 1) # Get from config or default
         self.linear = nn.Linear(input_dim, output_dim)
         self.criterion = nn.MSELoss()
 
@@ -47,6 +49,16 @@ class MinimalModelPT(ModelPT, adapter_mixins.AdapterModelPTMixin):
         self._train_dl = None
         self._validation_dl = None
         self._test_dl = None
+
+        # Manually set up data loaders using the data configs from the main cfg
+        # Access data configs from the main cfg object passed to MinimalModelPT's init
+        if hasattr(cfg, 'data'):
+            if hasattr(cfg.data, 'train_ds'):
+                self.setup_training_data(cfg.data.train_ds)
+            if hasattr(cfg.data, 'validation_ds'):
+                self.setup_validation_data(cfg.data.validation_ds)
+            if hasattr(cfg.data, 'test_ds'):
+                self.setup_test_data(cfg.data.test_ds)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Simple forward pass
@@ -121,6 +133,13 @@ class MinimalModelPT(ModelPT, adapter_mixins.AdapterModelPTMixin):
     def test_dataloader(self):
         return self._test_dl
 
+    # Added test_step method
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y_hat = self(x)
+        loss = self.criterion(y_hat, y)
+        self.log("test_loss", loss) # Log test loss
+
     # --- Other required abstract methods from ModelPT ---
     @classmethod
     def list_available_models(cls) -> Optional[List[Tuple[str, str]]]:
@@ -128,9 +147,31 @@ class MinimalModelPT(ModelPT, adapter_mixins.AdapterModelPTMixin):
 
     # Added _get_dataloader_from_config helper method with implementation, mirroring debug code
     def _get_dataloader_from_config(self, config: Union[DictConfig, Dict], shuffle: bool) -> DataLoader:
-        # Implementation of _get_dataloader_from_config method
-        # This is a placeholder and should be implemented based on your specific requirements
-        return None  # Placeholder return, actual implementation needed
+        # Implementation to create a DataLoader from DummyDataset based on config
+        # Ensure config is DictConfig
+        if isinstance(config, Dict):
+            config = OmegaConf.create(config)
+
+        try:
+            dataset_size = config.get("dataset_size", 100)
+            batch_size = config.get("batch_size", 32)
+            num_workers = config.get("num_workers", 0)
+            pin_memory = config.get("pin_memory", False)
+
+            # Create the DummyDataset
+            dataset = DummyDataset(size=dataset_size)
+
+            # Create and return the DataLoader
+            return DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+            )
+        except Exception as e:
+            logging.error(f"Error creating dataloader from config: {e}")
+            return None
 
     # --- Adapter related methods (minimal placeholders due to mixin inheritance) ---
     # These are needed because MinimalModelPT inherits from AdapterModelPTMixin, mirroring debug code
@@ -186,7 +227,7 @@ def main(cfg: DictConfig) -> None:
     logging.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
     # Instantiate trainer using config loaded by hydra_runner
-    trainer = pl.Trainer(**cfg.trainer)
+    trainer = Trainer(**cfg.trainer)
 
     # Add exp_manager call (optional, can add later if needed)
     # exp_manager(trainer, cfg.get("exp_manager", None))
@@ -194,9 +235,10 @@ def main(cfg: DictConfig) -> None:
     try:
         logging.info("Instantiating MinimalModelPT...")
         # Instantiate the model - pass the relevant model config (cfg.model) and trainer
-        # Matching the working debug file's direct instantiation pattern
+        # Matching the working debug file's direct instantiation pattern, but passing
+        # the full cfg here so MinimalModelPT can access data configs
         # Assuming model config is under cfg.model as in the debug file
-        model = MinimalModelPT(cfg=cfg.model, trainer=trainer)
+        model = MinimalModelPT(cfg=cfg, trainer=trainer)
         logging.info("MinimalModelPT instantiated successfully.")
 
         # Removed manual set_trainer call - trainer is passed in constructor
