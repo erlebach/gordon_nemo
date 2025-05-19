@@ -1,3 +1,4 @@
+import sys
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -153,26 +154,6 @@ if __name__ == "__main__":
         )
         logging.info("trainer.fit completed successfully.")
 
-        logging.info("\nCalling trainer.test...")
-        trainer.test(model, dataloaders=full_experiment_cfg.test_ds)
-        logging.info("trainer.test completed successfully.")
+        print("====> EXIT")
+        sys.exit()
 
-    except TypeError as e:
-        logging.error(f"\nCaught a TypeError: {e}")
-        logging.error("This suggests an issue with type checking.")
-        import traceback
-
-        traceback.print_exc()
-    except ValueError as e:
-        logging.error(f"\nCaught a ValueError: {e}")
-        logging.error("This suggests a configuration structure issue.")
-        import traceback
-
-        traceback.print_exc()
-    except Exception as e:
-        logging.error(f"\nCaught an unexpected error: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-    logging.info("\nTest finished.")
