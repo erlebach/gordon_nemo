@@ -163,6 +163,9 @@ class MultiBlockRegressor(torch.nn.Module):
         return x
 
 # ----------------------------------------------------------------------
+# Remove adapter related classes
+# ----------------------------------------------------------------------
+
 class MultiBlockRegressorModel(ModelPT, adapter_mixins.AdapterModelPTMixin):
     """MultiBlockRegressor model with NeMo ModelPT and adapter support.
 
@@ -191,9 +194,6 @@ class MultiBlockRegressorModel(ModelPT, adapter_mixins.AdapterModelPTMixin):
 
         # Initialize loss function
         self.criterion = nn.MSELoss()
-
-        # Setup adapters if needed
-        self.setup_adapters()
 
         # Setup dataloaders if configs are available
         if hasattr(cfg, "model"):
@@ -335,53 +335,6 @@ class MultiBlockRegressorModel(ModelPT, adapter_mixins.AdapterModelPTMixin):
             num_workers=config.get("num_workers", 0),
             pin_memory=config.get("pin_memory", False),
         )
-
-    def add_adapter(self, name: str, cfg: Union[DictConfig, Dict]):
-        """Add an adapter to the model.
-
-        Args:
-            name: Name of the adapter
-            cfg: Configuration for the adapter
-        """
-        super().add_adapter(name, cfg)
-
-        if name.startswith("lora"):
-            # Apply LoRA adapter
-            lora_config = MultiBlockRegressorLoraConfig(
-                dim=cfg.dim,
-                alpha=cfg.alpha,
-                dropout=cfg.dropout,
-                target_blocks=cfg.get("target_blocks", None),
-            )
-
-            # Create and apply the LoRA adapter
-            lora = MultiBlockRegressorLora(lora_config)
-            lora(self.regressor)
-
-    def get_enabled_adapters(self):
-        """Get the list of enabled adapters.
-
-        Returns:
-            List of enabled adapter names
-        """
-        return super().get_enabled_adapters()
-
-    def is_adapter_available(self) -> bool:
-        """Check if any adapter is available.
-
-        Returns:
-            True if at least one adapter is available
-        """
-        return super().is_adapter_available()
-
-    def set_enabled_adapters(self, name=None, enabled=True):
-        """Enable or disable adapters.
-
-        Args:
-            name: Name of the adapter to enable/disable, or None for all adapters
-            enabled: Whether to enable or disable the adapter(s)
-        """
-        super().set_enabled_adapters(name, enabled)
 
     @property
     def adapter_module_names(self) -> List[str]:
