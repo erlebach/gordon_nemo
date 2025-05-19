@@ -137,7 +137,6 @@ class MultiBlockRegressorModel(ModelPT, adapter_mixins.AdapterModelPTMixin):
     def _get_dataloader_from_config(
         self, config: Union[DictConfig, Dict], shuffle: bool = False
     ):
-        # Existing implementation for loading data from npz
         """Helper method to create a dataloader from config.
 
         Args:
@@ -147,7 +146,8 @@ class MultiBlockRegressorModel(ModelPT, adapter_mixins.AdapterModelPTMixin):
         Returns:
             DataLoader instance
         """
-        import numpy as np
+        # Ensure numpy is imported locally if needed, or rely on top-level import
+        # import numpy as np # Redundant if imported at top
 
         # Load data from numpy file - Assuming config has 'file_path', 'batch_size', 'num_workers', 'pin_memory'
         # Added checks for config attributes
