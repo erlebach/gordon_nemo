@@ -26,7 +26,8 @@ from omegaconf import DictConfig, OmegaConf
 # Remove adapter related classes
 # ----------------------------------------------------------------------
 
-class MultiBlockRegressorModel(ModelPT, adapter_mixins.AdapterModelPTMixin):
+# class MultiBlockRegressorModel(ModelPT, adapter_mixins.AdapterModelPTMixin):
+class MultiBlockRegressorModel(ModelPT):
     """MultiBlockRegressor model with NeMo ModelPT and adapter support.
 
     This class wraps the MultiBlockRegressor into NeMo's ModelPT framework,
