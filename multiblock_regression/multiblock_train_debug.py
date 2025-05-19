@@ -1,14 +1,26 @@
+"""
+A version of multiblock_train.py with all classes in a single file. 
+This will allow a series of simplifications to try and control
+the error produced, which has to do with how the constructor is 
+initialized (with both cfg and trainer). 
+"""
+
 # multiblock_train.py
 import lightning.pytorch as pl
 import numpy as np
 import torch
-from multiblock_adapter import MultiBlockRegressorModel
+# from multiblock_adapter import MultiBlockRegressorModel
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from omegaconf import DictConfig, OmegaConf
 
-@hydra_runner(config_path=".", config_name="multiblock_config")
+# ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+
+@hydra_runner(config_path=".", config_name="multiblock_debug_config")
 def main(cfg: DictConfig) -> None:
     """Main training function.
 
