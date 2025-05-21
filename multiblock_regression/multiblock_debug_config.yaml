@@ -56,28 +56,28 @@ adapter:
 trainer:
   devices: 1
   num_nodes: 1
-  max_epochs: 2
+  max_epochs: 50
   precision: 32
   accelerator: auto
   strategy: auto
   enable_checkpointing: false
-  logger: false
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
   benchmark: false
 
 exp_manager:
-  exp_dir: null  # default exp_dir is ./nemo_experiments
+  exp_dir: ./nemo_experiments
   name: ${name}
   create_tensorboard_logger: true
-  create_checkpoint_callback: true
   checkpoint_callback_params:
     monitor: val_loss
     mode: min
     save_top_k: 3
     always_save_nemo: false
-  resume_if_exists: true
+  resume_if_exists: false
   resume_ignore_no_checkpoint: true
+  resume_from_checkpoint: null
+  log_global_rank_0_only: true
 
 hydra:
   run:
