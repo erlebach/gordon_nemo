@@ -196,9 +196,12 @@ class MultiBlockRegressorPT(pl.LightningModule):
         # First call LightningModule's init
         super().__init__()
 
-        # Store config (attribute `model`)
+        # Store the config received. This config is expected to contain
+        # 'arch', 'optim', and dataset keys at its root level
         self.cfg = cfg
+
         # Now create the regressor as a member variable
+        # Access architectural parameters from cfg.arch
         self.regressor = MultiBlockRegressor(
             input_dim=cfg.arch.input_dim,
             hidden_dim=cfg.arch.hidden_dim,
@@ -345,16 +348,136 @@ class LossHistory(pl.Callback):
     def on_train_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        train_loss = trainer.callback_metrics.get("train_loss")
+        # Note: trainer.callback_metrics contains metrics logged with on_epoch=True
+        # The keys are the names used in self.log().
+        # If you log "train_loss" with on_epoch=True, it appears here as "train_loss_epoch".
+        # If you log "train_loss" without _epoch suffix, it might be available directly
+        # depending on PL version and exact logging setup.
+        # Let's check both just in case, but typically it's metric_name_epoch.
+        train_loss = trainer.callback_metrics.get("train_loss_epoch")
+        if train_loss is None:
+            # Fallback to the name used in self.log if _epoch isn't appended
+            train_loss = trainer.callback_metrics.get("train_loss")
+
         if train_loss is not None:
-            self.train_losses.append(train_loss.cpu().item())
+            # Ensure we handle both cases where train_loss could be a tensor or a Python number
+            if isinstance(train_loss, torch.Tensor):
+                self.train_losses.append(train_loss.cpu().item())
+            else:
+                self.train_losses.append(float(train_loss))
 
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        val_loss = trainer.callback_metrics.get("val_loss")
+        # Note: trainer.callback_metrics contains metrics logged with on_epoch=True
+        val_loss = trainer.callback_metrics.get("val_loss_epoch")
+        if val_loss is None:
+            # Fallback to the name used in self.log if _epoch isn'loss appe
+            val_loss = trainer.callback_metrics.get("val_loss")
+
         if val_loss is not None:
-            self.val_losses.append(val_loss.cpu().item())
+            # Ensure we handle both cases
+            if isinstance(val_loss, torch.Tensor):
+                self.val_losses.append(val_loss.cpu().item())
+            else:
+                self.val_losses.append(float(val_loss))
+
+
+class PredictionPlotter(pl.Callback):
+    """Callback to plot model predictions on test data periodically."""
+
+    def __init__(
+        self,
+        test_data_path: str,
+        loss_history_callback: LossHistory,
+        plot_interval: int = 2,
+    ):
+        super().__init__()
+        self.test_data_path = test_data_path
+        self.loss_history = loss_history_callback  # Store the LossHistory instance
+        self.plot_interval = plot_interval
+        # Load test data once in init
+        try:
+            data = np.load(test_data_path)
+            self.x_test_plot = data["x"]
+            self.y_test_plot = data["y"]
+            logging.info(f"Loaded test data for plotting from {test_data_path}")
+        except Exception as e:
+            logging.error(f"Error loading test data for plotting: {e}")
+            self.x_test_plot = None
+            self.y_test_plot = None
+
+    def on_validation_epoch_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
+        # Plot every plot_interval epochs, and optionally for the first few epochs
+        current_epoch = trainer.current_epoch
+        # Plot if it's a multiple of plot_interval (after the first epoch to ensure val_loss is available)
+        # or for epoch 0 if you want to see initial state
+        if (
+            current_epoch > 0 and (current_epoch + 1) % self.plot_interval == 0
+        ) or current_epoch == 0:
+            if (
+                self.x_test_plot is not None
+                and self.loss_history.train_losses
+                and self.loss_history.val_losses
+            ):
+                print(f"\nPlotting predictions for epoch {current_epoch + 1}...")
+
+                # Get the most recent losses from the LossHistory callback
+                # Since on_validation_epoch_end is called after validation for the epoch,
+                # the latest loss should be the last element in the lists.
+                try:
+                    train_loss_val = self.loss_history.train_losses[-1]
+                    val_loss_val = self.loss_history.val_losses[-1]
+                except IndexError:
+                    # Handle cases where lists might still be empty in very early stages
+                    train_loss_val = float("nan")
+                    val_loss_val = float("nan")
+                    print(
+                        f"Warning: Loss history lists are empty at epoch {current_epoch + 1}. Cannot include losses in plot title."
+                    )
+
+                # Get predictions
+                pl_module.eval()
+                with torch.no_grad():
+                    # Ensure tensor is on the correct device
+                    x_test_tensor_plot = torch.tensor(
+                        self.x_test_plot, dtype=torch.float32
+                    ).to(pl_module.device)
+                    y_pred_plot = pl_module(x_test_tensor_plot).cpu().numpy()
+                pl_module.train()  # Set back to training mode
+
+                # Create plot
+                plt.figure(figsize=(10, 6))
+                plt.plot(
+                    self.x_test_plot,
+                    self.y_test_plot,
+                    "bo",
+                    markersize=3,
+                    alpha=0.5,
+                    label="Original Data (Target)",
+                )
+                plt.plot(self.x_test_plot, y_pred_plot, "r-", label="Model Prediction")
+                plt.xlabel("x")
+                plt.ylabel("y")
+
+                # Format title with epoch and losses
+                title = f"Epoch {current_epoch + 1} Predictions | Train Loss: {train_loss_val:.4f} | Val Loss: {val_loss_val:.4f}"
+                plt.title(title)
+
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+
+                # Save plot with epoch number in filename
+                plot_filename = f"prediction_epoch_{current_epoch + 1}.png"
+                plt.savefig(plot_filename)
+                plt.close()
+                print(f"Prediction plot saved as '{plot_filename}'.")
+            elif self.x_test_plot is None:
+                print(
+                    f"Skipping plot for epoch {current_epoch + 1}: Test data not loaded."
+                )
 
 
 # ----------------------------------------------------------------------
@@ -363,31 +486,95 @@ if __name__ == "__main__":
 
     # Create the model
     config = OmegaConf.load("config/multiblock_config.yaml")
-    model_config_for_init = config.model
-    print(type(config))
-    print(DictConfig(config))
-    model = MultiBlockRegressorPT(cfg=model_config_for_init)
 
-    # Setup loss history callback
+    # Ensure config has 'trainer' and 'data' sections at the root,
+    # and that config.model has 'arch', 'optim', and dataset keys.
+    # Assuming the YAML structure is now:
+    # trainer: { max_epochs: ... }
+    # data: { train_ds: { ... }, validation_ds: { ... }, test_ds: { ... } }
+    # model: { arch: { ... }, optim: { ... } }
+
+    # If config structure is trainer:{..}, data:{..}, model:{..}
+    # model_init_cfg should contain model.arch, model.optim, data.train_ds, data.val_ds, data.test_ds
+    # Need to create a merged config for the model constructor
+    model_init_cfg = OmegaConf.create()
+    # Check if 'model' and 'arch' exist before accessing
+    if "model" in config and "arch" in config.model:
+        model_init_cfg.arch = config.model.arch
+    else:
+        raise ValueError("Config must contain 'model.arch' for model initialization.")
+
+    if "model" in config and "optim" in config.model:
+        model_init_cfg.optim = config.model.optim
+    else:
+        # Handle case where optim might be missing if it's optional
+        print("Warning: 'model.optim' not found in config.")
+        model_init_cfg.optim = OmegaConf.create({})  # Provide empty dict config
+
+    # Check if 'data' and its sub-keys exist
+    if "data" in config and "train_ds" in config.data:
+        model_init_cfg.train_ds = config.data.train_ds
+    else:
+        raise ValueError("Config must contain 'data.train_ds' for data setup.")
+
+    if "data" in config and "validation_ds" in config.data:
+        model_init_cfg.validation_ds = config.data.validation_ds
+    else:
+        print(
+            "Warning: 'data.validation_ds' not found in config. Validation might be skipped."
+        )
+        model_init_cfg.validation_ds = None  # Set to None if missing
+
+    if "data" in config and "test_ds" in config.data:
+        model_init_cfg.test_ds = config.data.test_ds
+    else:
+        print("Warning: 'data.test_ds' not found in config. Test might be skipped.")
+        model_init_cfg.test_ds = None  # Set to None if missing
+
+    model = MultiBlockRegressorPT(cfg=model_init_cfg)
+
+    # Setup loss history callback FIRST
     loss_history = LossHistory()
 
+    # Setup prediction plotter callback
+    # Pass the file path to the test data config AND the loss_history instance
+    prediction_plotter = PredictionPlotter(
+        test_data_path=config.data.test_ds.file_path,
+        loss_history_callback=loss_history,  # Pass the LossHistory instance
+        plot_interval=config.trainer.plot_interval,
+    )
+
     # Create trainer
+    # Check if 'trainer' and 'max_epochs' exist
+    max_epochs = 10  # Default
+    if "trainer" in config and "max_epochs" in config.trainer:
+        max_epochs = config.trainer.max_epochs
+    else:
+        print(
+            f"Warning: 'trainer.max_epochs' not found in config. Using default max_epochs={max_epochs}."
+        )
+
     trainer = pl.Trainer(
-        max_epochs=config.trainer.max_epochs,
+        max_epochs=max_epochs,
         logger=False,
         enable_checkpointing=False,
         enable_progress_bar=True,
-        accelerator="cpu",
+        accelerator="cpu",  # Ensure this is set correctly for your hardware
         devices=1,
-        callbacks=[loss_history],
+        callbacks=[loss_history, prediction_plotter],  # Add both callbacks here
     )
 
     # Train the model
     start = time.time()
     # Data setup methods must be called before trainer.fit
-    model.setup_training_data(config.data.train_ds)
-    model.setup_validation_data(config.data.validation_ds)
-    trainer.fit(model)
+    # These methods use the dataset configs stored in model.cfg (which is model_init_cfg)
+    model.setup_training_data(model.cfg.train_ds)
+    # Only setup validation if the config exists
+    if model.cfg.validation_ds is not None:
+        model.setup_validation_data(model.cfg.validation_ds)
+
+    trainer.fit(model, ckpt_path="last")  # Use ckpt_path="last" to resume if needed
+
     end = time.time()
     print(f"Training completed in {end - start:.2f} seconds")
 
@@ -395,54 +582,39 @@ if __name__ == "__main__":
     model.save_to("base_multiblock_model.pt")
     print("Base model saved as 'base_multiblock_model.pt'.")
 
-    # Plot loss curves
+    # Print final losses if needed
+    print(f"Final Training Losses: {loss_history.train_losses}")
+    print(f"Final Validation Losses: {loss_history.val_losses}")
+
+    # Plot final loss curves (log10 scale)
     plt.figure(figsize=(10, 6))
-    plt.plot(np.log10(loss_history.train_losses), label="Train Loss")
-    plt.plot(np.log10(loss_history.val_losses), label="Val Loss")
+    print(loss_history.train_losses)
+    print(loss_history.val_losses)
+    if loss_history.train_losses:  # Check if list is not empty before plotting
+        # Filter out potential NaNs or infinities if any resulted from log10(0)
+        train_losses_log10 = np.log10(loss_history.train_losses)
+        train_losses_log10 = train_losses_log10[np.isfinite(train_losses_log10)]
+        plt.plot(train_losses_log10, label="Train Loss")
+
+    if loss_history.val_losses:  # Check if list is not empty before plotting
+        # Filter out potential NaNs or infinities
+        val_losses_log10 = np.log10(loss_history.val_losses)
+        val_losses_log10 = val_losses_log10[np.isfinite(val_losses_log10)]
+        plt.plot(val_losses_log10, label="Val Loss")
+
     plt.xlabel("Epoch")
-    plt.ylabel("log10(Loss)")
+    plt.ylabel("log10(Loss)")  # Updated label
     plt.grid(True)
     plt.legend()
-    plt.title("log10(Loss) Curves over Epochs")
+    plt.title("log10(Loss) Curves over Epochs")  # Updated title
     plt.savefig("multiblock_loss.png")
     plt.close()
     print("Loss curves plot saved as 'multiblock_loss.png'.")
 
-    # Evaluate on test data
-    print("\nEvaluating base model on test data...")
-    # Data setup method must be called before trainer.test
-    model.setup_test_data(config.data.test_ds)
-    trainer.test(model)
-
-    # Visualize test predictions
-    try:
-        test_data_for_plot = np.load(config.data.test_ds.file_path)
-        x_test_plot = test_data_for_plot["x"]
-        y_test_plot = test_data_for_plot["y"]
-
-        model.eval()
-        with torch.no_grad():
-            x_test_tensor_plot = torch.tensor(x_test_plot, dtype=torch.float32)
-            y_base_pred_plot = model(x_test_tensor_plot).cpu().numpy()
-
-        plt.figure(figsize=(10, 6))
-        plt.plot(
-            x_test_plot,
-            y_test_plot,
-            "bo",
-            markersize=3,
-            alpha=0.5,
-            label="Original Data (Target)",
-        )
-        plt.plot(x_test_plot, y_base_pred_plot, "r-", label="Base Model Prediction")
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.title("Base Model Evaluation on Original Sine Task")
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.savefig("base_model_evaluation.png")
-        plt.close()
-        print("Base model evaluation plot saved as 'base_model_evaluation.png'.")
-
-    except Exception as e:
-        print(f"Error during base model evaluation plotting: {e}")
+    # Perform final test evaluation run if test data is available
+    if model.cfg.test_ds is not None:
+        print("\nPerforming final evaluation on test data...")
+        model.setup_test_data(model.cfg.test_ds)
+        trainer.test(model)
+    else:
+        print("\nSkipping final test evaluation: Test data config not available.")

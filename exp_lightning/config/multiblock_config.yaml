@@ -45,7 +45,7 @@ data:
 trainer:
   devices: 1
   num_nodes: 1
-  max_epochs: 150
+  max_epochs: 50
   precision: 32
   accelerator: auto
   strategy: auto
@@ -54,6 +54,7 @@ trainer:
   log_every_n_steps: 5
   check_val_every_n_epoch: 1
   benchmark: false
+  plot_interval: 5
 
 # Used by Nemo
 exp_manager:
