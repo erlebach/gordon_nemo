@@ -14,14 +14,25 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pytorch_lightning as pl
+
+# old
+# import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import yaml
 from jaxtyping import Float
-from lightning.pytorch import LightningDataModule, LightningModule
+
+# from lightning import Callback, LightningDataModule
+from lightning.pytorch import (
+    Callback,
+    LightningDataModule,
+    LightningModule,
+    Trainer,
+    seed_everything,
+)
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
+from torch.utils.data import DataLoader, TensorDataset
 
 
 class MLP(torch.nn.Module):
@@ -168,31 +179,217 @@ class MultiBlockRegressor(torch.nn.Module):
 
 
 class MultiBlockRegressorDataModule(LightningDataModule):
+    """A LightningDataModule for the MultiBlockRegressor."""
+
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
 
-    def setup(self, stage: Optional[str] = None):
-        pass
+    def setup(self, stage: str | None = None) -> None:
+        """Set up data loaders for different stages (fit, train, val, test).
 
-    def train_dataloader(self):
+        This method is called by the Lightning Trainer.
+
+        Args:
+            stage: The stage of the training process (e.g., 'fit', 'train',
+                'validate', 'test', 'predict'). Defaults to None.
+
+        """
+        # The logic inside setup remains the same, it responds to the stage
+        if stage in ("fit", "train", None):
+            # Check if config for train_ds and validation_ds exists before setting up
+            if self.cfg and hasattr(self.cfg, "train_ds"):
+                self._setup_training_data(self.cfg.train_ds)
+            else:
+                logging.warning(
+                    "Train dataset config not found or incomplete. Cannot setup training dataloader."
+                )
+                self._train_dl = None  # Ensure dataloader is None if config is missing
+
+            if self.cfg and hasattr(self.cfg, "validation_ds"):
+                self._setup_validation_data(self.cfg.validation_ds)
+            else:
+                logging.warning(
+                    "Validation dataset config not found or incomplete. Cannot setup validation dataloader."
+                )
+                self._validation_dl = (
+                    None  # Ensure dataloader is None if config is missing
+                )
+
+        if stage == "test":
+            # Check if config for test_ds exists before setting up
+            if self.cfg and hasattr(self.cfg, "test_ds"):
+                self._setup_test_data(self.cfg.test_ds)
+            else:
+                logging.warning(
+                    "Test dataset config not found or incomplete. Cannot setup test dataloader."
+                )
+                self._test_dl = None  # Ensure dataloader is None if config is missing
+
+    def _setup_training_data(self, train_data_config: DictConfig | dict) -> None:
+        """Set up the training dataloader. Internal method."""
+        # Added explicit type check/assertion as discussed
+        assert (
+            train_data_config is not None
+        ), "Training data configuration cannot be None."
+        assert isinstance(
+            train_data_config, DictConfig | dict
+        ), f"Expected DictConfig or dict for training data config, but got {type(train_data_config)}"
+
+        self._train_dl = self._get_dataloader_from_config(
+            train_data_config, shuffle=True
+        )
+        if self._train_dl:
+            logging.info("Train DataLoader prepared")
+
+    def _setup_validation_data(self, val_data_config: Union[DictConfig, Dict]) -> None:
+        """Set up the validation dataloader. Internal method."""
+        # Added explicit type check/assertion
+        # Validation config can be None if not doing validation, so handle that first
+        if val_data_config is None:
+            self._validation_dl = None
+            logging.info(
+                "Validation data configuration is None. Skipping validation dataloader setup."
+            )
+            return
+
+        assert isinstance(
+            val_data_config, DictConfig | Dict
+        ), f"Expected DictConfig or Dict for validation data config, but got {type(val_data_config)}"
+
+        self._validation_dl = self._get_dataloader_from_config(
+            val_data_config, shuffle=False
+        )
+        if self._validation_dl:
+            logging.info("Validation DataLoader prepared")
+
+    def _setup_test_data(self, test_data_config: DictConfig | dict) -> None:
+        """Set up the test dataloader. Internal method."""
+        # Added explicit type check/assertion
+        # Test config can be None if not doing testing, so handle that first
+        if test_data_config is None:
+            self._test_dl = None
+            logging.info(
+                "Test data configuration is None. Skipping test dataloader setup."
+            )
+            return
+
+        assert isinstance(
+            test_data_config, DictConfig | dict
+        ), f"Expected DictConfig or Dict for test data config, but got {type(test_data_config)}"
+
+        self._test_dl = self._get_dataloader_from_config(
+            test_data_config, shuffle=False
+        )
+        if self._test_dl:
+            logging.info("Test DataLoader prepared")
+
+    def _get_dataloader_from_config(
+        self,
+        config: DictConfig | dict,
+        shuffle: bool = False,
+    ) -> DataLoader | None:
+        """Construct the dataloader from the config.
+
+        The config should contain the following keys:
+        - file_path: The path to the data file.
+        - batch_size: The batch size.
+        - num_workers: The number of workers to use.
+        - pin_memory: Whether to pin memory.
+
+        Args:
+            config: The config to use to construct the dataloader.
+            shuffle: Whether to shuffle the data.
+
+        Returns:
+            The dataloader, or None if config is None or loading fails.
+
+        Raises:
+            ValueError: If essential configuration keys ('file_path', 'batch_size') are missing or None.
+            Exception: Propagates exceptions from data loading or dataloader creation.
+        """
+        # config is already checked for None by the calling _setup_ methods
+
+        try:
+            # Added checks for file_path and batch_size presence using .get() for safety
+            file_path = config.get("file_path")
+            batch_size = config.get("batch_size")
+
+            # Use explicit check and raise ValueError if essential keys are missing or None
+            if file_path is None:
+                raise ValueError(
+                    "Dataset config is missing or has None value for 'file_path'."
+                )
+            if batch_size is None:
+                raise ValueError(
+                    "Dataset config is missing or has None value for 'batch_size'."
+                )
+
+            # Add asserts after getting to help type checkers
+            assert isinstance(
+                file_path, str
+            ), f"Expected 'file_path' to be a string, but got {type(file_path)}"
+            assert isinstance(
+                batch_size, int
+            ), f"Expected 'batch_size' to be an integer, but got {type(batch_size)}"
+
+            num_workers = config.get("num_workers", 0)
+            pin_memory = config.get("pin_memory", False)
+
+            # Add asserts for optional args if strict type checking is desired
+            # assert isinstance(num_workers, int), f"Expected 'num_workers' to be an integer, but got {type(num_workers)}"
+            # assert isinstance(pin_memory, bool), f"Expected 'pin_memory' to be a boolean, but got {type(pin_memory)}"
+
+            print(f"Loading data from: {file_path}")
+            # Use os.path.exists for robustness
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Data file not found at: {file_path}")
+
+            data = np.load(file_path)
+            x = data["x"]
+            y = data["y"]
+
+            dataset = torch.utils.data.TensorDataset(
+                torch.tensor(x, dtype=torch.float32),
+                torch.tensor(y, dtype=torch.float32),
+            )
+
+            dataloader = torch.utils.data.DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+            )
+            print(f"DataLoader created successfully for {file_path}.")
+            return dataloader
+        except Exception as e:
+            # Log the error clearly
+            logging.error(f"Error creating dataloader from config: {e}")
+            # Re-raise the exception to signal failure
+            raise e
+
+    def train_dataloader(self) -> DataLoader | None:
+        """Return training dataloader. Called by the trainer."""
         return self._train_dl
 
-    def val_dataloader(self):
+    def val_dataloader(self) -> DataLoader | None:
+        """Return validation dataloader. Called by the trainer."""
         return self._validation_dl
 
-    def test_dataloader(self):
+    def test_dataloader(self) -> DataLoader | None:
+        """Return test dataloader. Called by the trainer."""
         return self._test_dl
 
 
-# Inherit directly from pl.LightningModule and implement methods needed
-class MultiBlockRegressorPT(pl.LightningModule):
+# Inherit directly from LightningModule and implement methods needed
+class MultiBlockRegressorPT(LightningModule):
     """A multi-block regressor wrapped as a Lightning Module.
 
     Uses composition to contain a MultiBlockRegressor instance.
     """
 
-    def __init__(self, cfg: DictConfig, trainer: pl.Trainer = None):
+    def __init__(self, cfg: DictConfig, trainer: Trainer = None):
         # First call LightningModule's init
         super().__init__()
 
@@ -267,69 +464,6 @@ class MultiBlockRegressorPT(pl.LightningModule):
         else:
             return optimizer
 
-    def setup_training_data(self, train_data_config: Union[DictConfig, Dict]):
-        self._train_dl = self._get_dataloader_from_config(
-            train_data_config, shuffle=True
-        )
-        logging.info("Train DataLoader prepared")
-
-    def setup_validation_data(self, val_data_config: Union[DictConfig, Dict]):
-        self._validation_dl = self._get_dataloader_from_config(
-            val_data_config, shuffle=False
-        )
-        logging.info("Validation DataLoader prepared")
-
-    def setup_test_data(self, test_data_config: Union[DictConfig, Dict]):
-        self._test_dl = self._get_dataloader_from_config(
-            test_data_config, shuffle=False
-        )
-        logging.info("Test DataLoader prepared")
-
-    def _get_dataloader_from_config(
-        self, config: Union[DictConfig, Dict], shuffle: bool = False
-    ):
-        if config is None:
-            return None
-
-        try:
-            file_path = config.file_path
-            batch_size = config.batch_size
-            num_workers = config.get("num_workers", 0)
-            pin_memory = config.get("pin_memory", False)
-
-            print(f"Loading data from: {file_path}")
-            data = np.load(file_path)
-            x = data["x"]
-            y = data["y"]
-
-            dataset = torch.utils.data.TensorDataset(
-                torch.tensor(x, dtype=torch.float32),
-                torch.tensor(y, dtype=torch.float32),
-            )
-
-            dataloader = torch.utils.data.DataLoader(
-                dataset,
-                batch_size=batch_size,
-                shuffle=shuffle,
-                num_workers=num_workers,
-                pin_memory=pin_memory,
-            )
-            print(f"DataLoader created successfully for {file_path}.")
-            return dataloader
-        except Exception as e:
-            print(f"Error creating dataloader from config: {e}")
-            raise
-
-    # Add methods needed for PyTorch Lightning
-    def train_dataloader(self):
-        return self._train_dl
-
-    def val_dataloader(self):
-        return self._validation_dl
-
-    def test_dataloader(self):
-        return self._test_dl
-
     # Simple save and restore methods to mimic ModelPT
     def save_to(self, save_path):
         state_dict = self.state_dict()
@@ -337,7 +471,7 @@ class MultiBlockRegressorPT(pl.LightningModule):
         print(f"Model saved to {save_path}")
 
 
-class LossHistory(pl.Callback):
+class LossHistory(Callback):
     """Callback to store training and validation losses for plotting."""
 
     def __init__(self):
@@ -345,9 +479,7 @@ class LossHistory(pl.Callback):
         self.train_losses: list[float] = []
         self.val_losses: list[float] = []
 
-    def on_train_epoch_end(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ) -> None:
+    def on_train_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         # Note: trainer.callback_metrics contains metrics logged with on_epoch=True
         # The keys are the names used in self.log().
         # If you log "train_loss" with on_epoch=True, it appears here as "train_loss_epoch".
@@ -367,7 +499,7 @@ class LossHistory(pl.Callback):
                 self.train_losses.append(float(train_loss))
 
     def on_validation_epoch_end(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+        self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
         # Note: trainer.callback_metrics contains metrics logged with on_epoch=True
         val_loss = trainer.callback_metrics.get("val_loss_epoch")
@@ -383,7 +515,7 @@ class LossHistory(pl.Callback):
                 self.val_losses.append(float(val_loss))
 
 
-class PredictionPlotter(pl.Callback):
+class PredictionPlotter(Callback):
     """Callback to plot model predictions on test data periodically."""
 
     def __init__(
@@ -408,7 +540,7 @@ class PredictionPlotter(pl.Callback):
             self.y_test_plot = None
 
     def on_validation_epoch_end(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+        self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
         # Plot every plot_interval epochs, and optionally for the first few epochs
         current_epoch = trainer.current_epoch
@@ -482,98 +614,138 @@ class PredictionPlotter(pl.Callback):
 
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
-    pl.seed_everything(42, workers=True)
+    seed_everything(42, workers=True)
 
-    # Create the model
+    # Load the full configuration from the YAML file
     config = OmegaConf.load("config/multiblock_config.yaml")
 
-    # Ensure config has 'trainer' and 'data' sections at the root,
-    # and that config.model has 'arch', 'optim', and dataset keys.
-    # Assuming the YAML structure is now:
-    # trainer: { max_epochs: ... }
-    # data: { train_ds: { ... }, validation_ds: { ... }, test_ds: { ... } }
-    # model: { arch: { ... }, optim: { ... } }
+    # Assuming config structure is trainer:{..}, data:{..}, model:{..}
+    # Pass the relevant parts of the config to the DataModule and Model
+    config_model = config.model
+    config_data = config.data
+    config_trainer = config.trainer
 
-    # If config structure is trainer:{..}, data:{..}, model:{..}
-    # model_init_cfg should contain model.arch, model.optim, data.train_ds, data.val_ds, data.test_ds
-    # Need to create a merged config for the model constructor
+    # Instantiate the DataModule - The trainer will call setup later
+    data_module = MultiBlockRegressorDataModule(cfg=config_data)
+    # DO NOT CALL setup() MANUALLY HERE: data_module.setup("fit")
+
+    # Instantiate the Model - Needs arch, optim, and potentially dataset configs
+    # Create a merged config for the model constructor if its __init__ or methods
+    # require arch, optim, and dataset configs at the top level of its cfg.
+    # Based on the MultiBlockRegressorPT.__init__, it *does* expect arch at top level.
+    # And setup_..._data methods expect dataset configs. So merge is appropriate.
     model_init_cfg = OmegaConf.create()
-    # Check if 'model' and 'arch' exist before accessing
+
+    # Check and assign arch config
     if "model" in config and "arch" in config.model:
         model_init_cfg.arch = config.model.arch
     else:
         raise ValueError("Config must contain 'model.arch' for model initialization.")
 
+    # Check and assign optim config
     if "model" in config and "optim" in config.model:
         model_init_cfg.optim = config.model.optim
     else:
-        # Handle case where optim might be missing if it's optional
-        print("Warning: 'model.optim' not found in config.")
-        model_init_cfg.optim = OmegaConf.create({})  # Provide empty dict config
-
-    # Check if 'data' and its sub-keys exist
-    if "data" in config and "train_ds" in config.data:
-        model_init_cfg.train_ds = config.data.train_ds
-    else:
-        raise ValueError("Config must contain 'data.train_ds' for data setup.")
-
-    if "data" in config and "validation_ds" in config.data:
-        model_init_cfg.validation_ds = config.data.validation_ds
-    else:
-        print(
-            "Warning: 'data.validation_ds' not found in config. Validation might be skipped."
+        logging.warning(
+            "Warning: 'model.optim' not found in config. Optimizer configuration might be incomplete."
         )
-        model_init_cfg.validation_ds = None  # Set to None if missing
+        model_init_cfg.optim = OmegaConf.create(
+            {}
+        )  # Provide empty dict config if optional
 
-    if "data" in config and "test_ds" in config.data:
-        model_init_cfg.test_ds = config.data.test_ds
+    # Check and assign dataset configs to model_init_cfg if the model needs them internally
+    # (The DataModule is the primary source for the trainer, but the model might use these too)
+    if "data" in config:
+        if "train_ds" in config.data:
+            model_init_cfg.train_ds = config.data.train_ds
+        else:
+            logging.warning(
+                "Warning: 'data.train_ds' not found in config. Model's internal training data setup might fail."
+            )
+            model_init_cfg.train_ds = None  # Set to None if missing
+
+        if "validation_ds" in config.data:
+            model_init_cfg.validation_ds = config.data.validation_ds
+        else:
+            logging.warning(
+                "Warning: 'data.validation_ds' not found in config. Model's internal validation data setup might fail."
+            )
+            model_init_cfg.validation_ds = None  # Set to None if missing
+
+        if "test_ds" in config.data:
+            model_init_cfg.test_ds = config.data.test_ds
+        else:
+            logging.warning(
+                "Warning: 'data.test_ds' not found in config. Model's internal test data setup might fail."
+            )
+            model_init_cfg.test_ds = None  # Set to None if missing
     else:
-        print("Warning: 'data.test_ds' not found in config. Test might be skipped.")
-        model_init_cfg.test_ds = None  # Set to None if missing
+        logging.warning(
+            "Warning: 'data' section not found in config. Model's internal data setup might fail."
+        )
+        # Provide empty dict configs for datasets if the section is missing entirely
+        model_init_cfg.train_ds = None
+        model_init_cfg.validation_ds = None
+        model_init_cfg.test_ds = None
 
-    model = MultiBlockRegressorPT(cfg=model_init_cfg)
+    model = MultiBlockRegressorPT(cfg=model_init_cfg)  # Pass the merged config
 
     # Setup loss history callback FIRST
     loss_history = LossHistory()
 
     # Setup prediction plotter callback
     # Pass the file path to the test data config AND the loss_history instance
-    prediction_plotter = PredictionPlotter(
-        test_data_path=config.data.test_ds.file_path,
-        loss_history_callback=loss_history,  # Pass the LossHistory instance
-        plot_interval=config.trainer.plot_interval,
-    )
+    # Check if test_ds exists and has file_path before creating plotter
+    test_data_path_for_plotter = None
+    if (
+        "data" in config
+        and "test_ds" in config.data
+        and "file_path" in config.data.test_ds
+    ):
+        test_data_path_for_plotter = config.data.test_ds.file_path
+    else:
+        logging.warning(
+            "Test data file path not found in config. Prediction plotting will be skipped."
+        )
+
+    prediction_plotter = None  # Initialize to None
+    if test_data_path_for_plotter is not None:
+        prediction_plotter = PredictionPlotter(
+            test_data_path=test_data_path_for_plotter,
+            loss_history_callback=loss_history,  # Pass the LossHistory instance
+            plot_interval=config_trainer.get(
+                "plot_interval", 2
+            ),  # Use .get() for plot_interval too
+        )
 
     # Create trainer
     # Check if 'trainer' and 'max_epochs' exist
-    max_epochs = 10  # Default
-    if "trainer" in config and "max_epochs" in config.trainer:
-        max_epochs = config.trainer.max_epochs
-    else:
-        print(
-            f"Warning: 'trainer.max_epochs' not found in config. Using default max_epochs={max_epochs}."
-        )
+    max_epochs = config_trainer.get("max_epochs", 10)  # Use .get() for safety
 
-    trainer = pl.Trainer(
+    # Collect callbacks into a list, including the plotter only if it was created
+    callbacks_list = [loss_history]
+    if prediction_plotter is not None:
+        callbacks_list.append(prediction_plotter)
+
+    trainer = Trainer(
         max_epochs=max_epochs,
         logger=False,
-        enable_checkpointing=False,
+        enable_checkpointing=False,  # Consider enabling checkpointing
         enable_progress_bar=True,
-        accelerator="cpu",  # Ensure this is set correctly for your hardware
-        devices=1,
-        callbacks=[loss_history, prediction_plotter],  # Add both callbacks here
+        accelerator="cpu",  # Change to 'gpu' or 'auto' if GPU is available
+        devices=1,  # Set to 'auto' or number of GPUs if using GPU
+        callbacks=callbacks_list,  # Use the collected list of callbacks
     )
 
     # Train the model
     start = time.time()
-    # Data setup methods must be called before trainer.fit
-    # These methods use the dataset configs stored in model.cfg (which is model_init_cfg)
-    model.setup_training_data(model.cfg.train_ds)
-    # Only setup validation if the config exists
-    if model.cfg.validation_ds is not None:
-        model.setup_validation_data(model.cfg.validation_ds)
 
-    trainer.fit(model, ckpt_path="last")  # Use ckpt_path="last" to resume if needed
+    # Start training
+    trainer.fit(
+        model,
+        datamodule=data_module,
+        ckpt_path="last",  # trainer gets data from datamodule
+    )
 
     end = time.time()
     print(f"Training completed in {end - start:.2f} seconds")
@@ -588,33 +760,39 @@ if __name__ == "__main__":
 
     # Plot final loss curves (log10 scale)
     plt.figure(figsize=(10, 6))
-    print(loss_history.train_losses)
-    print(loss_history.val_losses)
-    if loss_history.train_losses:  # Check if list is not empty before plotting
+    # Added checks before printing and plotting
+    if loss_history.train_losses:
+        print(f"Plotting Train Losses: {loss_history.train_losses}")
         # Filter out potential NaNs or infinities if any resulted from log10(0)
         train_losses_log10 = np.log10(loss_history.train_losses)
         train_losses_log10 = train_losses_log10[np.isfinite(train_losses_log10)]
-        plt.plot(train_losses_log10, label="Train Loss")
+        plt.plot(
+            range(1, len(train_losses_log10) + 1),
+            train_losses_log10,
+            label="Train Loss",
+        )  # Plot against epoch number
+    else:
+        print("No training losses to plot.")
 
-    if loss_history.val_losses:  # Check if list is not empty before plotting
+    if loss_history.val_losses:
+        print(f"Plotting Validation Losses: {loss_history.val_losses}")
         # Filter out potential NaNs or infinities
         val_losses_log10 = np.log10(loss_history.val_losses)
         val_losses_log10 = val_losses_log10[np.isfinite(val_losses_log10)]
-        plt.plot(val_losses_log10, label="Val Loss")
+        plt.plot(
+            range(1, len(val_losses_log10) + 1), val_losses_log10, label="Val Loss"
+        )  # Plot against epoch number
+    else:
+        print("No validation losses to plot.")
 
-    plt.xlabel("Epoch")
-    plt.ylabel("log10(Loss)")  # Updated label
+    plt.xlabel("Epoch")  # Label is now just Epoch, as the axis represents epoch count
+    plt.ylabel("log10(Loss)")
     plt.grid(True)
     plt.legend()
-    plt.title("log10(Loss) Curves over Epochs")  # Updated title
+    plt.title("log10(Loss) Curves over Epochs")
     plt.savefig("multiblock_loss.png")
     plt.close()
     print("Loss curves plot saved as 'multiblock_loss.png'.")
 
-    # Perform final test evaluation run if test data is available
-    if model.cfg.test_ds is not None:
-        print("\nPerforming final evaluation on test data...")
-        model.setup_test_data(model.cfg.test_ds)
-        trainer.test(model)
-    else:
-        print("\nSkipping final test evaluation: Test data config not available.")
+    print("\nPerforming final evaluation on test data...")
+    trainer.test(model, datamodule=data_module)

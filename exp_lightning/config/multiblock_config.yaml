@@ -31,13 +31,13 @@ data:
     pin_memory: false
     
   validation_ds:
-    file_path: "data/base/sine_val.npz"
+    file_path: "data/finetune/sine_val.npz"
     batch_size: 32
     num_workers: 0
     pin_memory: false
     
   test_ds:
-    file_path: "data/base/sine_test.npz"
+    file_path: "data/finetune/sine_test.npz"
     batch_size: 32
     num_workers: 0
     pin_memory: false
