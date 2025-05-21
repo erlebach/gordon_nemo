@@ -76,3 +76,8 @@ hydra:
   job_logging:
     root:
       handlers: null
+
+  checkpoint:
+    dirpath: "checkpoints/"
+    every_n_epochs: 10
+    save_last: true

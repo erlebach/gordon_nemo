@@ -30,6 +30,7 @@ from lightning.pytorch import (
     Trainer,
     seed_everything,
 )
+from lightning.pytorch.callbacks import ModelCheckpoint
 from omegaconf import DictConfig, OmegaConf
 from torch import Tensor
 from torch.utils.data import DataLoader, TensorDataset
@@ -718,6 +719,46 @@ if __name__ == "__main__":
             ),  # Use .get() for plot_interval too
         )
 
+    # Setup ModelCheckpoint callback
+    checkpoint_callback = None  # Initialize to None
+    if "checkpoint" in config_trainer:
+        checkpoint_cfg = config_trainer.checkpoint
+        checkpoint_dirpath = checkpoint_cfg.get("dirpath", "checkpoints/")
+        checkpoint_every_n_epochs = checkpoint_cfg.get("every_n_epochs")
+        checkpoint_save_last = checkpoint_cfg.get(
+            "save_last", False
+        )  # Default to False if not specified
+
+        # Create the directory if it doesn't exist
+        os.makedirs(checkpoint_dirpath, exist_ok=True)
+
+        # Create the ModelCheckpoint callback instance
+        if checkpoint_every_n_epochs is not None:
+            print(
+                f"Setting up checkpointing every {checkpoint_every_n_epochs} epochs to {checkpoint_dirpath}"
+            )
+            checkpoint_callback = ModelCheckpoint(
+                dirpath=checkpoint_dirpath,
+                filename="{epoch}",  # Include epoch in filename
+                every_n_epochs=checkpoint_every_n_epochs,
+                save_last=checkpoint_save_last,
+                save_top_k=-1,  # Save all checkpoints when using every_n_epochs
+                # monitor='val_loss',  # Not needed for saving every N epochs
+                # mode='min',
+            )
+        elif checkpoint_save_last:
+            print(f"Setting up checkpointing to save last only to {checkpoint_dirpath}")
+            checkpoint_callback = ModelCheckpoint(
+                dirpath=checkpoint_dirpath,
+                filename="{epoch}-last",  # Filename for the last checkpoint
+                save_last=True,
+                save_top_k=0,  # Do not save top k based on a monitor
+            )
+        else:
+            logging.warning(
+                "Checkpoint configuration found but neither 'every_n_epochs' nor 'save_last' is specified. Checkpointing is disabled."
+            )
+
     # Create trainer
     # Check if 'trainer' and 'max_epochs' exist
     max_epochs = config_trainer.get("max_epochs", 10)  # Use .get() for safety
@@ -726,6 +767,8 @@ if __name__ == "__main__":
     callbacks_list = [loss_history]
     if prediction_plotter is not None:
         callbacks_list.append(prediction_plotter)
+    if checkpoint_callback is not None:
+        callbacks_list.append(checkpoint_callback)
 
     trainer = Trainer(
         max_epochs=max_epochs,
