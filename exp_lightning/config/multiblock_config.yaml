@@ -5,17 +5,18 @@ model:
   # Architecture parameters using a different namespace
   arch:
     input_dim: 1
-    hidden_dim: 16
+    hidden_dim: 32
     output_dim: 1
-    num_blocks: 2
+    num_blocks: 3
     num_layers_per_block: 2
     activation: "tanh"
+    dropout: 0.02
 
   # Optimizer configuration
   optim:
     name: adam
     lr: 0.01
-    weight_decay: 0.0
+    weight_decay: 0.00
     
     sched:
       name: CosineAnnealing
@@ -31,13 +32,13 @@ data:
     pin_memory: false
     
   validation_ds:
-    file_path: "data/finetune/sine_val.npz"
+    file_path: "data/base/sine_val.npz"
     batch_size: 32
     num_workers: 0
     pin_memory: false
     
   test_ds:
-    file_path: "data/finetune/sine_test.npz"
+    file_path: "data/base/sine_test.npz"
     batch_size: 32
     num_workers: 0
     pin_memory: false
@@ -45,7 +46,7 @@ data:
 trainer:
   devices: 1
   num_nodes: 1
-  max_epochs: 31
+  max_epochs: 161
   precision: 32
   accelerator: auto
   strategy: auto
@@ -87,8 +88,9 @@ hydra:
 
 # Add this key to specify a checkpoint to resume from
 # Set to null or omit if starting training from scratch
-resume_from_checkpoint: checkpoints/epoch=10-step=352.ckpt
+###  resume_from_checkpoint: checkpoints/last-v15.ckpt
 # Example if you want to resume from a specific epoch's checkpoint:
+# resume_from_checkpoint: "checkpoints/epoch=9-step=X.ckpt" # Replace X with actual step
 # resume_from_checkpoint: "checkpoints/epoch=9-step=X.ckpt" # Replace X with actual step
 # Or if you saved with save_last=True and want to resume the absolute latest:
 # resume_from_checkpoint: "checkpoints/last.ckpt" # Requires ModelCheckpoint(save_last=True)

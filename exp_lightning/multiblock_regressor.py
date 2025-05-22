@@ -28,8 +28,12 @@ from lightning.pytorch import (
     seed_everything,
 )
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.profilers import PyTorchProfiler
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
+
+# from torch.compile import
+# disallow_in_graph = torch._dynamo.disallow_in_graph
 
 
 class MLP(torch.nn.Module):
@@ -43,11 +47,17 @@ class MLP(torch.nn.Module):
     """
 
     def __init__(
-        self, input_dim: int, hidden_dim: int, output_dim: int, activation: str = "tanh"
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        output_dim: int,
+        activation: str = "tanh",
+        dropout: float = 0.0,
     ):
         super().__init__()
 
         self.fc1 = torch.nn.Linear(input_dim, hidden_dim)
+        self.dropout1 = torch.nn.Dropout(dropout)
 
         if activation.lower() == "tanh":
             self.activation = nn.Tanh()
@@ -62,6 +72,7 @@ class MLP(torch.nn.Module):
 
     def forward(self, x):
         x = self.fc1(x)
+        x = self.dropout1(x)
         x = self.activation(x)
         x = self.fc2(x)
         return x
@@ -78,7 +89,12 @@ class ResidualMLP(torch.nn.Module):
     """
 
     def __init__(
-        self, dim: int, num_layers: int, hidden_dim: int, activation: str = "tanh"
+        self,
+        dim: int,
+        num_layers: int,
+        hidden_dim: int,
+        activation: str = "tanh",
+        dropout: float = 0.1,
     ):
         super().__init__()
 
@@ -86,7 +102,7 @@ class ResidualMLP(torch.nn.Module):
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
         self.layers = nn.ModuleList(
-            [MLP(dim, hidden_dim, dim, activation) for _ in range(num_layers)]
+            [MLP(dim, hidden_dim, dim, activation, dropout) for _ in range(num_layers)]
         )
 
     def forward(self, x):
@@ -118,6 +134,7 @@ class MultiBlockRegressor(torch.nn.Module):
         num_blocks: int = 2,
         num_layers_per_block: int = 2,
         activation: str = "tanh",
+        dropout: float = 0.1,
     ):
         super().__init__()
 
@@ -125,7 +142,7 @@ class MultiBlockRegressor(torch.nn.Module):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         self.num_blocks = num_blocks
-
+        self.dropout = dropout
         # Create the blocks
         self.blocks = nn.ModuleList()
 
@@ -135,6 +152,7 @@ class MultiBlockRegressor(torch.nn.Module):
             num_layers=num_layers_per_block,
             hidden_dim=hidden_dim,
             activation=activation,
+            dropout=dropout,
         )
         self.blocks.append(first_block)
         setattr(self, f"block_0", first_block)
@@ -146,6 +164,7 @@ class MultiBlockRegressor(torch.nn.Module):
                 num_layers=num_layers_per_block,
                 hidden_dim=hidden_dim,
                 activation=activation,
+                dropout=dropout,
             )
             self.blocks.append(block)
             setattr(self, f"block_{i}", block)
@@ -403,6 +422,7 @@ class MultiBlockRegressorPT(LightningModule):
             num_blocks=cfg.arch.num_blocks,
             num_layers_per_block=cfg.arch.num_layers_per_block,
             activation=cfg.arch.activation,
+            dropout=cfg.arch.dropout,
         )
 
         # Define the loss function
@@ -635,7 +655,13 @@ if __name__ == "__main__":
     if checkpoint_callback is not None:
         callbacks_list.append(checkpoint_callback)
 
+    # profiler = PyTorchProfiler()
+    profiler = PyTorchProfiler(filename="prof.out")
+    # Requires CUDA and nvcc
+    # profiler = PyTorchProfiler(emit_nvtx=True)
+
     trainer = Trainer(
+        profiler=profiler,
         max_epochs=max_epochs,
         logger=False,
         enable_progress_bar=True,
@@ -653,6 +679,13 @@ if __name__ == "__main__":
         benchmark=config_trainer.get("benchmark", False),
         callbacks=callbacks_list,  # Use the collected list of callbacks
     )
+
+    # Compile the model
+    # model = torch.compile(
+    #     model,
+    #     # fullgraph=False,
+    #     # dynamic=True,
+    # )
 
     # Train the model
     start = time.time()
