@@ -4,27 +4,22 @@ Original version used the pytorch_lightning from Nemo.
 This version uses the lightning module.
 """
 
-import json
 import logging
 import os
-import tarfile
 import time
-from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Union
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 # old
-# import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import yaml
-from jaxtyping import Float
-
-# from lightning import Callback, LightningDataModule
+from exp_lightning.multiblock_regressor_impl import (
+    LossHistory,
+    PredictionPlotter,
+    plot_loss_curves,
+)
 from lightning.pytorch import (
-    Callback,
     LightningDataModule,
     LightningModule,
     Trainer,
@@ -32,8 +27,7 @@ from lightning.pytorch import (
 )
 from lightning.pytorch.callbacks import ModelCheckpoint
 from omegaconf import DictConfig, OmegaConf
-from torch import Tensor
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 
 
 class MLP(torch.nn.Module):
@@ -472,147 +466,6 @@ class MultiBlockRegressorPT(LightningModule):
         print(f"Model saved to {save_path}")
 
 
-class LossHistory(Callback):
-    """Callback to store training and validation losses for plotting."""
-
-    def __init__(self):
-        super().__init__()
-        self.train_losses: list[float] = []
-        self.val_losses: list[float] = []
-
-    def on_train_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        # Note: trainer.callback_metrics contains metrics logged with on_epoch=True
-        # The keys are the names used in self.log().
-        # If you log "train_loss" with on_epoch=True, it appears here as "train_loss_epoch".
-        # If you log "train_loss" without _epoch suffix, it might be available directly
-        # depending on PL version and exact logging setup.
-        # Let's check both just in case, but typically it's metric_name_epoch.
-        train_loss = trainer.callback_metrics.get("train_loss_epoch")
-        if train_loss is None:
-            # Fallback to the name used in self.log if _epoch isn't appended
-            train_loss = trainer.callback_metrics.get("train_loss")
-
-        if train_loss is not None:
-            # Ensure we handle both cases where train_loss could be a tensor or a Python number
-            if isinstance(train_loss, torch.Tensor):
-                self.train_losses.append(train_loss.cpu().item())
-            else:
-                self.train_losses.append(float(train_loss))
-
-    def on_validation_epoch_end(
-        self, trainer: Trainer, pl_module: LightningModule
-    ) -> None:
-        # Note: trainer.callback_metrics contains metrics logged with on_epoch=True
-        val_loss = trainer.callback_metrics.get("val_loss_epoch")
-        if val_loss is None:
-            # Fallback to the name used in self.log if _epoch isn'loss appe
-            val_loss = trainer.callback_metrics.get("val_loss")
-
-        if val_loss is not None:
-            # Ensure we handle both cases
-            if isinstance(val_loss, torch.Tensor):
-                self.val_losses.append(val_loss.cpu().item())
-            else:
-                self.val_losses.append(float(val_loss))
-
-
-class PredictionPlotter(Callback):
-    """Callback to plot model predictions on test data periodically."""
-
-    def __init__(
-        self,
-        test_data_path: str,
-        loss_history_callback: LossHistory,
-        plot_interval: int = 2,
-    ):
-        super().__init__()
-        self.test_data_path = test_data_path
-        self.loss_history = loss_history_callback  # Store the LossHistory instance
-        self.plot_interval = plot_interval
-        # Load test data once in init
-        try:
-            data = np.load(test_data_path)
-            self.x_test_plot = data["x"]
-            self.y_test_plot = data["y"]
-            logging.info(f"Loaded test data for plotting from {test_data_path}")
-        except Exception as e:
-            logging.error(f"Error loading test data for plotting: {e}")
-            self.x_test_plot = None
-            self.y_test_plot = None
-
-    def on_validation_epoch_end(
-        self, trainer: Trainer, pl_module: LightningModule
-    ) -> None:
-        # Plot every plot_interval epochs, and optionally for the first few epochs
-        current_epoch = trainer.current_epoch
-        # Plot if it's a multiple of plot_interval (after the first epoch to ensure val_loss is available)
-        # or for epoch 0 if you want to see initial state
-        if (
-            current_epoch > 0 and (current_epoch + 1) % self.plot_interval == 0
-        ) or current_epoch == 0:
-            if (
-                self.x_test_plot is not None
-                and self.loss_history.train_losses
-                and self.loss_history.val_losses
-            ):
-                print(f"\nPlotting predictions for epoch {current_epoch + 1}...")
-
-                # Get the most recent losses from the LossHistory callback
-                # Since on_validation_epoch_end is called after validation for the epoch,
-                # the latest loss should be the last element in the lists.
-                try:
-                    train_loss_val = self.loss_history.train_losses[-1]
-                    val_loss_val = self.loss_history.val_losses[-1]
-                except IndexError:
-                    # Handle cases where lists might still be empty in very early stages
-                    train_loss_val = float("nan")
-                    val_loss_val = float("nan")
-                    print(
-                        f"Warning: Loss history lists are empty at epoch {current_epoch + 1}. Cannot include losses in plot title."
-                    )
-
-                # Get predictions
-                pl_module.eval()
-                with torch.no_grad():
-                    # Ensure tensor is on the correct device
-                    x_test_tensor_plot = torch.tensor(
-                        self.x_test_plot, dtype=torch.float32
-                    ).to(pl_module.device)
-                    y_pred_plot = pl_module(x_test_tensor_plot).cpu().numpy()
-                pl_module.train()  # Set back to training mode
-
-                # Create plot
-                plt.figure(figsize=(10, 6))
-                plt.plot(
-                    self.x_test_plot,
-                    self.y_test_plot,
-                    "bo",
-                    markersize=3,
-                    alpha=0.5,
-                    label="Original Data (Target)",
-                )
-                plt.plot(self.x_test_plot, y_pred_plot, "r-", label="Model Prediction")
-                plt.xlabel("x")
-                plt.ylabel("y")
-
-                # Format title with epoch and losses
-                title = f"Epoch {current_epoch + 1} Predictions | Train Loss: {train_loss_val:.4f} | Val Loss: {val_loss_val:.4f}"
-                plt.title(title)
-
-                plt.legend()
-                plt.grid(True, alpha=0.3)
-
-                # Save plot with epoch number in filename
-                plot_filename = f"prediction_epoch_{current_epoch + 1}.png"
-                plt.savefig(plot_filename)
-                plt.close()
-                print(f"Prediction plot saved as '{plot_filename}'.")
-            elif self.x_test_plot is None:
-                print(
-                    f"Skipping plot for epoch {current_epoch + 1}: Test data not loaded."
-                )
-
-
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     seed_everything(42, workers=True)
@@ -733,6 +586,7 @@ if __name__ == "__main__":
         os.makedirs(checkpoint_dirpath, exist_ok=True)
 
         # Create the ModelCheckpoint callback instance
+        print(f"... {checkpoint_every_n_epochs=}")
         if checkpoint_every_n_epochs is not None:
             print(
                 f"Setting up checkpointing every {checkpoint_every_n_epochs} epochs to {checkpoint_dirpath}"
@@ -762,18 +616,19 @@ if __name__ == "__main__":
     # Create trainer
     # Check if 'trainer' and 'max_epochs' exist
     max_epochs = config_trainer.get("max_epochs", 10)  # Use .get() for safety
+    enable_checkpointing = config_trainer.get("enable_checkpointing", False)
 
     # Collect callbacks into a list, including the plotter only if it was created
     callbacks_list = [loss_history]
     if prediction_plotter is not None:
         callbacks_list.append(prediction_plotter)
-    if checkpoint_callback is not None:
+    if checkpoint_callback is not None and enable_checkpointing is True:
         callbacks_list.append(checkpoint_callback)
 
     trainer = Trainer(
         max_epochs=max_epochs,
         logger=False,
-        enable_checkpointing=False,  # Consider enabling checkpointing
+        enable_checkpointing=enable_checkpointing,  # Consider enabling checkpointing
         enable_progress_bar=True,
         accelerator="cpu",  # Change to 'gpu' or 'auto' if GPU is available
         devices=1,  # Set to 'auto' or number of GPUs if using GPU
@@ -801,41 +656,7 @@ if __name__ == "__main__":
     print(f"Final Training Losses: {loss_history.train_losses}")
     print(f"Final Validation Losses: {loss_history.val_losses}")
 
-    # Plot final loss curves (log10 scale)
-    plt.figure(figsize=(10, 6))
-    # Added checks before printing and plotting
-    if loss_history.train_losses:
-        print(f"Plotting Train Losses: {loss_history.train_losses}")
-        # Filter out potential NaNs or infinities if any resulted from log10(0)
-        train_losses_log10 = np.log10(loss_history.train_losses)
-        train_losses_log10 = train_losses_log10[np.isfinite(train_losses_log10)]
-        plt.plot(
-            range(1, len(train_losses_log10) + 1),
-            train_losses_log10,
-            label="Train Loss",
-        )  # Plot against epoch number
-    else:
-        print("No training losses to plot.")
-
-    if loss_history.val_losses:
-        print(f"Plotting Validation Losses: {loss_history.val_losses}")
-        # Filter out potential NaNs or infinities
-        val_losses_log10 = np.log10(loss_history.val_losses)
-        val_losses_log10 = val_losses_log10[np.isfinite(val_losses_log10)]
-        plt.plot(
-            range(1, len(val_losses_log10) + 1), val_losses_log10, label="Val Loss"
-        )  # Plot against epoch number
-    else:
-        print("No validation losses to plot.")
-
-    plt.xlabel("Epoch")  # Label is now just Epoch, as the axis represents epoch count
-    plt.ylabel("log10(Loss)")
-    plt.grid(True)
-    plt.legend()
-    plt.title("log10(Loss) Curves over Epochs")
-    plt.savefig("multiblock_loss.png")
-    plt.close()
-    print("Loss curves plot saved as 'multiblock_loss.png'.")
+    plot_loss_curves(loss_history)
 
     print("\nPerforming final evaluation on test data...")
     trainer.test(model, datamodule=data_module)
