@@ -45,7 +45,7 @@ data:
 trainer:
   devices: 1
   num_nodes: 1
-  max_epochs: 50
+  max_epochs: 31
   precision: 32
   accelerator: auto
   strategy: auto
@@ -60,10 +60,11 @@ trainer:
   checkpoint:
     dirpath: "checkpoints/"
     # required for checkpointing
-    every_n_epochs: 10
-    save_last: false
+    # every_n_epochs: 10
+    save_last: true
 
 # Used by Nemo
+# Not used in my Lightning code
 exp_manager:
   exp_dir: null  # default exp_dir is ./nemo_experiments
   name: ${name}
@@ -83,4 +84,12 @@ hydra:
   job_logging:
     root:
       handlers: null
+
+# Add this key to specify a checkpoint to resume from
+# Set to null or omit if starting training from scratch
+resume_from_checkpoint: checkpoints/epoch=10-step=352.ckpt
+# Example if you want to resume from a specific epoch's checkpoint:
+# resume_from_checkpoint: "checkpoints/epoch=9-step=X.ckpt" # Replace X with actual step
+# Or if you saved with save_last=True and want to resume the absolute latest:
+# resume_from_checkpoint: "checkpoints/last.ckpt" # Requires ModelCheckpoint(save_last=True)
 

@@ -7,8 +7,9 @@ This version uses the lightning module.
 import logging
 import os
 import time
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Union, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 # old
@@ -20,6 +21,7 @@ from exp_lightning.multiblock_regressor_impl import (
     plot_loss_curves,
 )
 from lightning.pytorch import (
+    Callback,
     LightningDataModule,
     LightningModule,
     Trainer,
@@ -473,21 +475,32 @@ if __name__ == "__main__":
     # Load the full configuration from the YAML file
     config = OmegaConf.load("config/multiblock_config.yaml")
 
-    # Assuming config structure is trainer:{..}, data:{..}, model:{..}
-    # Pass the relevant parts of the config to the DataModule and Model
+    # Get specific config sections
     config_model = config.model
     config_data = config.data
     config_trainer = config.trainer
 
+    # Get the resume_from_checkpoint path from the TOP LEVEL of the config
+    resume_from_checkpoint_path = config.get("resume_from_checkpoint")
+
+    if resume_from_checkpoint_path is not None:
+        print(
+            f"Attempting to resume training from checkpoint: {resume_from_checkpoint_path}"
+        )
+        if not os.path.exists(resume_from_checkpoint_path):
+            logging.warning(
+                f"Checkpoint file not found at {resume_from_checkpoint_path}. Starting training from scratch."
+            )
+            resume_from_checkpoint_path = None  # Reset to None if file doesn't exist
+
+    print(f"{resume_from_checkpoint_path=}")
+
     # Instantiate the DataModule - The trainer will call setup later
     data_module = MultiBlockRegressorDataModule(cfg=config_data)
-    # DO NOT CALL setup() MANUALLY HERE: data_module.setup("fit")
 
     # Instantiate the Model - Needs arch, optim, and potentially dataset configs
     # Create a merged config for the model constructor if its __init__ or methods
     # require arch, optim, and dataset configs at the top level of its cfg.
-    # Based on the MultiBlockRegressorPT.__init__, it *does* expect arch at top level.
-    # And setup_..._data methods expect dataset configs. So merge is appropriate.
     model_init_cfg = OmegaConf.create()
 
     # Check and assign arch config
@@ -508,7 +521,6 @@ if __name__ == "__main__":
         )  # Provide empty dict config if optional
 
     # Check and assign dataset configs to model_init_cfg if the model needs them internally
-    # (The DataModule is the primary source for the trainer, but the model might use these too)
     if "data" in config:
         if "train_ds" in config.data:
             model_init_cfg.train_ds = config.data.train_ds
@@ -564,16 +576,17 @@ if __name__ == "__main__":
 
     prediction_plotter = None  # Initialize to None
     if test_data_path_for_plotter is not None:
+        # Use .get() for plot_interval from config_trainer
+        plot_interval_cfg = config_trainer.get("plot_interval", 2)
         prediction_plotter = PredictionPlotter(
             test_data_path=test_data_path_for_plotter,
             loss_history_callback=loss_history,  # Pass the LossHistory instance
-            plot_interval=config_trainer.get(
-                "plot_interval", 2
-            ),  # Use .get() for plot_interval too
+            plot_interval=plot_interval_cfg,
         )
 
     # Setup ModelCheckpoint callback
     checkpoint_callback = None  # Initialize to None
+    # Check if 'checkpoint' section exists under trainer
     if "checkpoint" in config_trainer:
         checkpoint_cfg = config_trainer.checkpoint
         checkpoint_dirpath = checkpoint_cfg.get("dirpath", "checkpoints/")
@@ -586,7 +599,6 @@ if __name__ == "__main__":
         os.makedirs(checkpoint_dirpath, exist_ok=True)
 
         # Create the ModelCheckpoint callback instance
-        print(f"... {checkpoint_every_n_epochs=}")
         if checkpoint_every_n_epochs is not None:
             print(
                 f"Setting up checkpointing every {checkpoint_every_n_epochs} epochs to {checkpoint_dirpath}"
@@ -597,14 +609,12 @@ if __name__ == "__main__":
                 every_n_epochs=checkpoint_every_n_epochs,
                 save_last=checkpoint_save_last,
                 save_top_k=-1,  # Save all checkpoints when using every_n_epochs
-                # monitor='val_loss',  # Not needed for saving every N epochs
-                # mode='min',
             )
         elif checkpoint_save_last:
             print(f"Setting up checkpointing to save last only to {checkpoint_dirpath}")
             checkpoint_callback = ModelCheckpoint(
                 dirpath=checkpoint_dirpath,
-                filename="{epoch}-last",  # Filename for the last checkpoint
+                filename="last",  # Standard filename for the last checkpoint
                 save_last=True,
                 save_top_k=0,  # Do not save top k based on a monitor
             )
@@ -616,47 +626,101 @@ if __name__ == "__main__":
     # Create trainer
     # Check if 'trainer' and 'max_epochs' exist
     max_epochs = config_trainer.get("max_epochs", 10)  # Use .get() for safety
-    enable_checkpointing = config_trainer.get("enable_checkpointing", False)
 
-    # Collect callbacks into a list, including the plotter only if it was created
+    # Collect all active callbacks into a list
     callbacks_list = [loss_history]
+    callbacks_list = cast(list[Callback], callbacks_list)
     if prediction_plotter is not None:
         callbacks_list.append(prediction_plotter)
-    if checkpoint_callback is not None and enable_checkpointing is True:
+    if checkpoint_callback is not None:
         callbacks_list.append(checkpoint_callback)
 
     trainer = Trainer(
         max_epochs=max_epochs,
         logger=False,
-        enable_checkpointing=enable_checkpointing,  # Consider enabling checkpointing
         enable_progress_bar=True,
-        accelerator="cpu",  # Change to 'gpu' or 'auto' if GPU is available
-        devices=1,  # Set to 'auto' or number of GPUs if using GPU
+        accelerator=config_trainer.get(
+            "accelerator", "auto"
+        ),  # Use .get() for accelerator and devices
+        devices=config_trainer.get("devices", "auto"),
+        strategy=config_trainer.get(
+            "strategy", "auto"
+        ),  # Use .get() for strategy and precision
+        precision=config_trainer.get("precision", 32),
+        num_nodes=config_trainer.get("num_nodes", 1),
+        log_every_n_steps=config_trainer.get("log_every_n_steps", 5),
+        check_val_every_n_epoch=config_trainer.get("check_val_every_n_epoch", 1),
+        benchmark=config_trainer.get("benchmark", False),
         callbacks=callbacks_list,  # Use the collected list of callbacks
     )
 
     # Train the model
     start = time.time()
+    # Pass the datamodule to trainer.fit - the trainer will call its setup methods
+    # Remove the model's internal setup calls here, as the trainer uses the DataModule
 
     # Start training
+    # Use trainer.fit with the datamodule and the resume_from_checkpoint_path
     trainer.fit(
         model,
         datamodule=data_module,
-        ckpt_path="last",  # trainer gets data from datamodule
+        ckpt_path=resume_from_checkpoint_path,  # Use the path from config or None
     )
 
     end = time.time()
     print(f"Training completed in {end - start:.2f} seconds")
 
-    # Save the model
-    model.save_to("base_multiblock_model.pt")
-    print("Base model saved as 'base_multiblock_model.pt'.")
+    # Save the model (optional, can rely on checkpointing)
+    # Use a different name or remove if you rely entirely on Lightning checkpointing
+    # model.save_to("base_multiblock_model.pt")
+    # print("Base model saved as 'base_multiblock_model.pt'.")
 
     # Print final losses if needed
     print(f"Final Training Losses: {loss_history.train_losses}")
     print(f"Final Validation Losses: {loss_history.val_losses}")
 
-    plot_loss_curves(loss_history)
+    # Plot final loss curves (log10 scale)
+    plt.figure(figsize=(10, 6))
+    # Added checks before printing and plotting
+    if loss_history.train_losses:
+        print(f"Plotting Train Losses: {loss_history.train_losses}")
+        # Filter out potential NaNs or infinities if any resulted from log10(0)
+        train_losses_log10 = np.log10(loss_history.train_losses)
+        train_losses_log10 = train_losses_log10[np.isfinite(train_losses_log10)]
+        # Plot against epoch number (1-indexed). If resuming, the epoch numbers
+        # on the x-axis should still represent the *total* epochs trained.
+        # The loss_history list will append from where training resumes.
+        # For accuracy, you might want to store starting epoch if resuming.
+        # For simplicity here, plotting against list index + 1 for now.
+        plt.plot(
+            range(1, len(train_losses_log10) + 1),
+            train_losses_log10,
+            label="Train Loss",
+        )
+    else:
+        print("No training losses to plot.")
 
-    print("\nPerforming final evaluation on test data...")
+    if loss_history.val_losses:
+        print(f"Plotting Validation Losses: {loss_history.val_losses}")
+        # Filter out potential NaNs or infinities
+        val_losses_log10 = np.log10(loss_history.val_losses)
+        val_losses_log10 = val_losses_log10[np.isfinite(val_losses_log10)]
+        # Plot against epoch number (1-indexed)
+        plt.plot(
+            range(1, len(val_losses_log10) + 1), val_losses_log10, label="Val Loss"
+        )
+    else:
+        print("No validation losses to plot.")
+
+    plt.xlabel("Epoch")  # Label is now just Epoch, as the axis represents epoch count
+    plt.ylabel("log10(Loss)")
+    plt.grid(True)
+    plt.legend()
+    plt.title("log10(Loss) Curves over Epochs")
+    plt.savefig("multiblock_loss.png")
+    plt.close()
+    print("Loss curves plot saved as 'multiblock_loss.png'.")
+
+    # Perform final test evaluation run if test data is available
+    # This will use the DataModule's test_dataloader and setup('test') will be called by the trainer
     trainer.test(model, datamodule=data_module)
