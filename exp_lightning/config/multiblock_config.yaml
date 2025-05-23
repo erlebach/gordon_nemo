@@ -5,9 +5,9 @@ model:
   # Architecture parameters using a different namespace
   arch:
     input_dim: 1
-    hidden_dim: 32
+    hidden_dim: 16
     output_dim: 1
-    num_blocks: 3
+    num_blocks: 2
     num_layers_per_block: 2
     activation: "tanh"
     dropout: 0.02
@@ -46,7 +46,7 @@ data:
 trainer:
   devices: 1
   num_nodes: 1
-  max_epochs: 161
+  max_epochs: 41
   precision: 32
   accelerator: auto
   strategy: auto

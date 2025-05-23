@@ -18,7 +18,7 @@ import torch.nn as nn
 from exp_lightning.multiblock_regressor_impl import (
     LossHistory,
     PredictionPlotter,
-    plot_loss_curves,
+    # plot_loss_curves,
 )
 from lightning.pytorch import (
     Callback,
@@ -28,6 +28,7 @@ from lightning.pytorch import (
     seed_everything,
 )
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.profilers import PyTorchProfiler
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
@@ -429,9 +430,13 @@ class MultiBlockRegressorPT(LightningModule):
         self.criterion = nn.MSELoss()
 
         # Create dataloaders
-        self._train_dl = None
-        self._validation_dl = None
-        self._test_dl = None
+        # These will be handled by the DataModule, so these attributes aren't strictly needed here
+        # self._train_dl = None
+        # self._validation_dl = None
+        # self._test_dl = None
+
+        # Important: Save hyperparameters! This makes them appear in TensorBoard HPARAMS tab
+        self.save_hyperparameters(cfg)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Delegate to the regressor's forward method
@@ -441,6 +446,7 @@ class MultiBlockRegressorPT(LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = self.criterion(y_hat, y)
+        # Keep self.log calls - Lightning will send them to the logger
         self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
@@ -448,6 +454,7 @@ class MultiBlockRegressorPT(LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = self.criterion(y_hat, y)
+        # Keep self.log calls - Lightning will send them to the logger
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
@@ -455,6 +462,7 @@ class MultiBlockRegressorPT(LightningModule):
         x, y = batch
         y_hat = self(x)
         loss = self.criterion(y_hat, y)
+        # Keep self.log calls - Lightning will send them to the logger
         self.log("test_loss", loss, prog_bar=True)
         return loss
 
@@ -482,6 +490,7 @@ class MultiBlockRegressorPT(LightningModule):
             return optimizer
 
     # Simple save and restore methods to mimic ModelPT
+    # You can still keep this if you want to save the final model state manually
     def save_to(self, save_path):
         state_dict = self.state_dict()
         torch.save(state_dict, save_path)
@@ -541,6 +550,9 @@ if __name__ == "__main__":
         )  # Provide empty dict config if optional
 
     # Check and assign dataset configs to model_init_cfg if the model needs them internally
+    # Note: With DataModule, the model typically doesn't need data config internally.
+    # Consider if this is necessary based on your ModelPT class design.
+    # If ModelPT does not need data config, you can remove this section.
     if "data" in config:
         if "train_ds" in config.data:
             model_init_cfg.train_ds = config.data.train_ds
@@ -577,6 +589,8 @@ if __name__ == "__main__":
     model = MultiBlockRegressorPT(cfg=model_init_cfg)  # Pass the merged config
 
     # Setup loss history callback FIRST
+    # Keep LossHistory if you still want to access losses as a list after training,
+    # but logging will now primarily be handled by TensorBoard.
     loss_history = LossHistory()
 
     # Setup prediction plotter callback
@@ -604,7 +618,7 @@ if __name__ == "__main__":
             plot_interval=plot_interval_cfg,
         )
 
-    # Setup ModelCheckpoint callback
+    # Setup ModelCheckpoint callback - Keep this for saving model checkpoints
     checkpoint_callback = None  # Initialize to None
     # Check if 'checkpoint' section exists under trainer
     if "checkpoint" in config_trainer:
@@ -643,12 +657,17 @@ if __name__ == "__main__":
                 "Checkpoint configuration found but neither 'every_n_epochs' nor 'save_last' is specified. Checkpointing is disabled."
             )
 
-    # Create trainer
-    # Check if 'trainer' and 'max_epochs' exist
-    max_epochs = config_trainer.get("max_epochs", 10)  # Use .get() for safety
+    # Create TensorBoard Logger instance
+    # Logs will be saved to ./logs/tensorboard/multiblock_regressor_experiment/version_x
+    tensorboard_logger = TensorBoardLogger(
+        "logs", name="multiblock_regressor_experiment"
+    )
+    print(f"TensorBoard logs will be saved to: {tensorboard_logger.log_dir}")
 
     # Collect all active callbacks into a list
-    callbacks_list = [loss_history]
+    callbacks_list = [
+        loss_history
+    ]  # Keep LossHistory if needed for PredictionPlotter or post-train analysis
     callbacks_list = cast(list[Callback], callbacks_list)
     if prediction_plotter is not None:
         callbacks_list.append(prediction_plotter)
@@ -662,8 +681,9 @@ if __name__ == "__main__":
 
     trainer = Trainer(
         profiler=profiler,
-        max_epochs=max_epochs,
-        logger=False,
+        max_epochs=config_trainer.get("max_epochs", 10),
+        # logger=False, # REMOVE THIS! Let the logger handle logging
+        logger=tensorboard_logger,  # Pass the TensorBoard logger
         enable_progress_bar=True,
         accelerator=config_trainer.get(
             "accelerator", "auto"
@@ -708,51 +728,13 @@ if __name__ == "__main__":
     # model.save_to("base_multiblock_model.pt")
     # print("Base model saved as 'base_multiblock_model.pt'.")
 
-    # Print final losses if needed
-    print(f"Final Training Losses: {loss_history.train_losses}")
-    print(f"Final Validation Losses: {loss_history.val_losses}")
-
-    # Plot final loss curves (log10 scale)
-    plt.figure(figsize=(10, 6))
-    # Added checks before printing and plotting
-    if loss_history.train_losses:
-        print(f"Plotting Train Losses: {loss_history.train_losses}")
-        # Filter out potential NaNs or infinities if any resulted from log10(0)
-        train_losses_log10 = np.log10(loss_history.train_losses)
-        train_losses_log10 = train_losses_log10[np.isfinite(train_losses_log10)]
-        # Plot against epoch number (1-indexed). If resuming, the epoch numbers
-        # on the x-axis should still represent the *total* epochs trained.
-        # The loss_history list will append from where training resumes.
-        # For accuracy, you might want to store starting epoch if resuming.
-        # For simplicity here, plotting against list index + 1 for now.
-        plt.plot(
-            range(1, len(train_losses_log10) + 1),
-            train_losses_log10,
-            label="Train Loss",
-        )
-    else:
-        print("No training losses to plot.")
-
-    if loss_history.val_losses:
-        print(f"Plotting Validation Losses: {loss_history.val_losses}")
-        # Filter out potential NaNs or infinities
-        val_losses_log10 = np.log10(loss_history.val_losses)
-        val_losses_log10 = val_losses_log10[np.isfinite(val_losses_log10)]
-        # Plot against epoch number (1-indexed)
-        plt.plot(
-            range(1, len(val_losses_log10) + 1), val_losses_log10, label="Val Loss"
-        )
-    else:
-        print("No validation losses to plot.")
-
-    plt.xlabel("Epoch")  # Label is now just Epoch, as the axis represents epoch count
-    plt.ylabel("log10(Loss)")
-    plt.grid(True)
-    plt.legend()
-    plt.title("log10(Loss) Curves over Epochs")
-    plt.savefig("multiblock_loss.png")
-    plt.close()
-    print("Loss curves plot saved as 'multiblock_loss.png'.")
+    # Print final losses if needed - You can get these from the logger or LossHistory callback if kept
+    print(
+        f"Final Training Losses: {loss_history.train_losses[-1] if loss_history.train_losses else 'N/A'}"
+    )
+    print(
+        f"Final Validation Losses: {loss_history.val_losses[-1] if loss_history.val_losses else 'N/A'}"
+    )
 
     # Perform final test evaluation run if test data is available
     # This will use the DataModule's test_dataloader and setup('test') will be called by the trainer
