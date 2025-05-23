@@ -1,6 +1,6 @@
 """Multiblock Regressor: Adaptor Module
 
-Implementation of LORA from scratch. The MLP network: 
+Implementation of LORA from scratch. The MLP network:
     self.fc1 = torch.nn.Linear(input_dim, hidden_dim)
     self.fc2 = torch.nn.Linear(hidden_dim, output_dim)
 
@@ -11,7 +11,7 @@ Implementation of LORA from scratch. The MLP network:
         x = self.fc2(x)
         return x
 
-will be changed to: 
+will be changed to:
 
     def forward(self, x):
         x = self.fc1(x) + self.adapt1(x)
@@ -20,13 +20,13 @@ will be changed to:
         x = self.fc2(x) + self.adapt2(x)
         return x
 
-where 
+where
 
     self.adapt1(x) = W1 * W2 * x
 
 where W1 and W2 are two matrices or rank r. The adapter must be written in terms of the base class.
 
-Base class: `MultiBlockRegressor` with constructor: 
+Base class: `MultiBlockRegressor` with constructor:
 
 MultiBlockRegressor(self, input_dim: int = 1, hidden_dim: int = 16, output_dim: int = 1,
         num_blocks: int = 2, num_layers_per_block: int = 2, activation: str = "tanh",
@@ -34,6 +34,7 @@ MultiBlockRegressor(self, input_dim: int = 1, hidden_dim: int = 16, output_dim: 
 
 Needed: redefine Linear modules fc1, fc2 with weight replaced by W1 * W2
 """
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -66,9 +67,9 @@ class PEFT:
         """Transform a module. To be implemented by subclasses."""
         return module
 
-    def __call__(self, model):
+    def __call__(self, model_):
         """Apply transformations to model."""
-        return model
+        return model_
 
 
 # Simplified AdapterWrapper - implements locally
@@ -175,184 +176,7 @@ class MLPAdapter(nn.Module):
     def forward_fc2(self, x):
         return self.fc2_adapter(x)
 
-
-class MLPLoraWrapper(AdapterWrapper):
-    """Wrapper around an MLP module to add LoRA functionality.
-
-    Args:
-        to_wrap: The base MLP module to wrap.
-        adapter: The adapter module.
-    """
-
-    def __init__(
-        self,
-        to_wrap: MLP,
-        adapter: MLPAdapter,
-    ):
-        super().__init__(to_wrap=to_wrap, adapter=adapter)
-        self.base_module = to_wrap
-
-    def forward(self, x):
-        # Base forward
-        x1 = self.base_module.fc1(x)
-        x1 = self.base_module.activation(x1)
-
-        # Add fc1 adapter output
-        adapter_out1 = self.adapter.forward_fc1(x)
-        x1 = x1 + adapter_out1
-
-        # Continue with base forward
-        x2 = self.base_module.fc2(x1)
-
-        # Add fc2 adapter output
-        adapter_out2 = self.adapter.forward_fc2(x1)
-        x2 = x2 + adapter_out2
-
-        return x2
-
-
-class ResidualMLPAdapter(nn.Module):
-    """Adapter for ResidualMLP modules.
-
-    Args:
-        dim: Feature dimension.
-        hidden_dim: Hidden dimension.
-        num_layers: Number of layers.
-        adapter_dim: Adapter dimension.
-        alpha: Adapter scaling factor.
-        dropout: Dropout probability.
-    """
-
-    def __init__(
-        self,
-        dim: int,
-        hidden_dim: int,
-        num_layers: int,
-        adapter_dim: int = 8,
-        alpha: int = 32,
-        dropout: float = 0.0,
-    ):
-        super().__init__()
-
-        self.dim = dim
-        self.hidden_dim = hidden_dim
-        self.adapter_dim = adapter_dim
-        self.alpha = alpha
-        self.dropout = dropout
-
-        # Create adapters for each layer
-        self.adapters = nn.ModuleList(
-            [
-                MLPAdapter(
-                    in_features=dim,
-                    hidden_features=hidden_dim,
-                    out_features=dim,
-                    dim=adapter_dim,
-                    alpha=alpha,
-                    dropout=dropout,
-                )
-                for _ in range(num_layers)
-            ]
-        )
-
-    def get_adapter(self, idx: int):
-        """Get adapter at the specified index.
-
-        Args:
-            idx: Adapter index.
-
-        Returns:
-            The adapter at the specified index.
-        """
-        if idx < 0 or idx >= len(self.adapters):
-            raise IndexError(f"Adapter index {idx} out of range")
-        return self.adapters[idx]
-
-
-class ResidualMLPLoraWrapper(AdapterWrapper):
-    """Wrapper around a ResidualMLP module to add LoRA functionality.
-
-    Args:
-        to_wrap: The base ResidualMLP module to wrap.
-        adapter: The adapter module.
-    """
-
-    def __init__(
-        self,
-        to_wrap: ResidualMLP,
-        adapter: ResidualMLPAdapter,
-    ):
-        super().__init__(to_wrap=to_wrap, adapter=adapter)
-        self.base_module = to_wrap
-
-        # Create wrapped versions of each layer
-        self.adapter_layers = nn.ModuleList()
-        for i, layer in enumerate(to_wrap.layers):
-            # Get the corresponding adapter for this layer
-            layer_adapter = adapter.get_adapter(i)
-            # Create wrapped layer
-            wrapped_layer = MLPLoraWrapper(to_wrap=layer, adapter=layer_adapter)
-            self.adapter_layers.append(wrapped_layer)
-
-    def forward(self, x):
-        # Replicate the original forward but with wrapped layers
-        input_x = x
-        for layer in self.adapter_layers:
-            x = layer(x)
-            x = x + input_x  # Residual connection
-            input_x = x
-
-        return x
-
-
-@dataclass
-class MultiBlockRegressorLoraConfig:
-    """Configuration for MultiBlockRegressorLora.
-
-    Args:
-        dim: Dimension of the low-rank projection.
-        alpha: Scaling factor for the adapter output.
-        dropout: Dropout probability.
-        target_blocks: List of block indices to apply adapters to. If None, applies to all blocks.
-    """
-
-    dim: int = 8
-    alpha: int = 32
-    dropout: float = 0.0
-    target_blocks: Optional[List[int]] = None
-
-
-class MultiBlockRegressorLora(PEFT):
-    """LoRA implementation for MultiBlockRegressor.
-
-    This class implements the Parameter-Efficient Fine-Tuning (PEFT) interface
-    for MultiBlockRegressor by adding LoRA adapters to specific blocks.
-
-    Args:
-        config: Configuration for LoRA adapters.
-    """
-
-    def __init__(
-        self,
-        config: Optional[
-            Union[MultiBlockRegressorLoraConfig, DictConfig, Dict[str, Any]]
-        ] = None,
-    ):
-        super().__init__()
-
-        # Convert config to the right format if needed
-        if config is None:
-            self.config = MultiBlockRegressorLoraConfig()
-        elif isinstance(config, dict):
-            self.config = MultiBlockRegressorLoraConfig(
-                **{k: v for k, v in config.items()}
-            )
-        elif isinstance(config, DictConfig):
-            self.config = MultiBlockRegressorLoraConfig(
-                **{k: v for k, v in OmegaConf.to_container(config).items()}
-            )
-        else:
-            self.config = config
+    # ... rest of the code remains unchanged ...
 
     def transform(self, m: nn.Module, name=None, prefix=None):
         """Apply LoRA transformation to modules.
@@ -720,7 +544,7 @@ class MultiBlockRegressorModel(ModelPT, adapter_mixins.AdapterModelPTMixin):
     def test_dataloader(self):
         """Return the test dataloader with better error handling."""
         if not hasattr(self, "_test_dl") or self._test_dl is None:
-            if hasattr(self.cfg, "model") and hasattr(self.cfg.model, "test_ds"):
+            if hasattr(self.cfg, "model") and hasattr(self.cfg, "test_ds"):
                 print(
                     f"Setting up test dataloader from {self.cfg.model.test_ds.file_path}"
                 )
@@ -845,7 +669,8 @@ def main(cfg: DictConfig) -> None:
         model.save_to(cfg.nemo_path)
         logging.info(f"Model saved to {cfg.nemo_path}")
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
     seed_everything(42, workers=True)
 

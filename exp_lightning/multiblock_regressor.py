@@ -37,14 +37,97 @@ from torch.utils.data import DataLoader
 # disallow_in_graph = torch._dynamo.disallow_in_graph
 
 
+# Add LoraLinear class before MLP
+class LoraLinear(nn.Module):
+    """A Linear layer with LoRA adaptation.
+
+    Args:
+        in_features: Input features.
+        out_features: Output features.
+        lora_rank: The rank of the low-rank adaptation matrices.
+        lora_alpha: Scaling factor for the adapter output.
+        lora_dropout: Dropout probability for the LoRA path.
+        bias: Whether to use bias in the base linear layer (bias is not used in LoRA matrices).
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        lora_rank: int,
+        lora_alpha: int,
+        lora_dropout: float = 0.0,
+        bias: bool = True,  # Keep bias for the base linear layer
+    ):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.lora_rank = lora_rank
+        self.lora_alpha = lora_alpha
+        self.scaling = lora_alpha / lora_rank
+        self.lora_dropout = lora_dropout
+
+        # Base linear layer (can be pretrained and potentially frozen)
+        self.linear = nn.Linear(in_features, out_features, bias=bias)
+
+        if lora_rank > 0:
+            # LoRA A matrix (in_features -> lora_rank)
+            self.lora_a = nn.Linear(in_features, lora_rank, bias=False)
+            # LoRA B matrix (lora_rank -> out_features)
+            self.lora_b = nn.Linear(
+                lora_rank, out_features, bias=False
+            )  # LoRA does not use bias
+
+            # Optional dropout for the LoRA path
+            self.dropout = nn.Dropout(p=lora_dropout)
+
+            # Initialize LoRA weights
+            # Initialize A with Kaiming uniform and B with zeros as per common practice
+            nn.init.kaiming_uniform_(self.lora_a.weight, a=5**0.5)
+            nn.init.zeros_(self.lora_b.weight)
+
+            # Set LoRA parameters as trainable initially
+            self.lora_a.weight.requires_grad = True
+            self.lora_b.weight.requires_grad = True
+            if bias and self.linear.bias is not None:
+                self.linear.bias.requires_grad = (
+                    True  # Keep bias trainable for base linear
+                )
+        else:
+            # If lora_rank is 0, this is just a standard linear layer
+            self.lora_a = None
+            self.lora_b = None
+            self.dropout = None
+            # Ensure base linear weights are trainable if LoRA is off (default behavior)
+            self.linear.weight.requires_grad = True
+
+    def forward(self, x):
+        # Calculate base linear output
+        base_output = self.linear(x)
+
+        if self.lora_rank > 0 and self.lora_a is not None and self.lora_b is not None:
+            # Calculate LoRA output
+            lora_output = self.lora_b(self.lora_a(self.dropout(x))) * self.scaling
+            # Add LoRA output to base output
+            return base_output + lora_output
+        else:
+            # If LoRA is disabled (rank 0), just return the base output
+            return base_output
+
+
+# Modify the existing MLP class to use LoraLinear and accept LoRA params
 class MLP(torch.nn.Module):
-    """MLP layer.
+    """MLP layer modified to use LoraLinear for LoRA adaptation.
 
     Args:
         input_dim: Input dimension.
         hidden_dim: Hidden dimension.
         output_dim: Output dimension.
         activation: Activation function to use.
+        dropout: Dropout probability for the base MLP path.
+        lora_rank: The rank of the low-rank adaptation matrices for LoRA layers.
+        lora_alpha: Scaling factor for the LoRA adapter output.
+        lora_dropout: Dropout probability for the LoRA paths.
     """
 
     def __init__(
@@ -53,12 +136,24 @@ class MLP(torch.nn.Module):
         hidden_dim: int,
         output_dim: int,
         activation: str = "tanh",
-        dropout: float = 0.0,
+        dropout: float = 0.0,  # Base MLP dropout
+        lora_rank: int = 0,  # Default to no LoRA
+        lora_alpha: int = 32,
+        lora_dropout: float = 0.0,  # LoRA specific dropout
     ):
         super().__init__()
 
-        self.fc1 = torch.nn.Linear(input_dim, hidden_dim)
-        self.dropout1 = torch.nn.Dropout(dropout)
+        # Use LoraLinear for the linear layers, passing LoRA parameters
+        self.fc1 = LoraLinear(
+            input_dim,
+            hidden_dim,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            bias=True,  # Use bias for fc1
+        )
+
+        self.dropout1 = torch.nn.Dropout(dropout)  # Base MLP dropout
 
         if activation.lower() == "tanh":
             self.activation = nn.Tanh()
@@ -69,24 +164,38 @@ class MLP(torch.nn.Module):
         else:
             self.activation = nn.Tanh()
 
-        self.fc2 = torch.nn.Linear(hidden_dim, output_dim)
+        # Use LoraLinear for the second linear layer, passing LoRA parameters
+        self.fc2 = LoraLinear(
+            hidden_dim,
+            output_dim,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            bias=True,  # Use bias for fc2
+        )
 
     def forward(self, x):
+        # The forward pass remains simple because LoraLinear handles the addition
         x = self.fc1(x)
-        x = self.dropout1(x)
+        x = self.dropout1(x)  # Apply base MLP dropout after fc1 + lora1
         x = self.activation(x)
         x = self.fc2(x)
         return x
 
 
+# Modify ResidualMLP __init__ to accept and pass down LoRA params
 class ResidualMLP(torch.nn.Module):
-    """Residual MLP module.
+    """Residual MLP module using potentially LoRA-modified MLP layers.
 
     Args:
         dim: Feature dimension.
         num_layers: Number of MLP layers.
         hidden_dim: Hidden dimension for each MLP layer.
         activation: Activation function to use.
+        dropout: Dropout probability for the base MLP path.
+        lora_rank: LoRA rank passed to MLP layers.
+        lora_alpha: LoRA alpha passed to MLP layers.
+        lora_dropout: LoRA dropout passed to MLP layers.
     """
 
     def __init__(
@@ -96,14 +205,30 @@ class ResidualMLP(torch.nn.Module):
         hidden_dim: int,
         activation: str = "tanh",
         dropout: float = 0.1,
+        lora_rank: int = 0,  # Add LoRA parameters
+        lora_alpha: int = 32,
+        lora_dropout: float = 0.0,
     ):
         super().__init__()
 
         self.dim = dim
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
+        # Create layers using the modified MLP, passing LoRA parameters
         self.layers = nn.ModuleList(
-            [MLP(dim, hidden_dim, dim, activation, dropout) for _ in range(num_layers)]
+            [
+                MLP(
+                    dim,
+                    hidden_dim,
+                    dim,  # Output dim of ResidualMLP internal layer is dim
+                    activation,
+                    dropout,
+                    lora_rank=lora_rank,  # Pass LoRA params
+                    lora_alpha=lora_alpha,
+                    lora_dropout=lora_dropout,
+                )
+                for _ in range(num_layers)
+            ]
         )
 
     def forward(self, x):
@@ -115,8 +240,9 @@ class ResidualMLP(torch.nn.Module):
         return x
 
 
+# Modify MultiBlockRegressor __init__ to accept and pass down LoRA params
 class MultiBlockRegressor(torch.nn.Module):
-    """A multi-block regressor (core architecture).
+    """A multi-block regressor (core architecture) using potentially LoRA-modified ResidualMLP blocks.
 
     Args:
         input_dim: Input dimension.
@@ -125,6 +251,10 @@ class MultiBlockRegressor(torch.nn.Module):
         num_blocks: Number of residual blocks.
         num_layers_per_block: Number of MLP layers per block.
         activation: Activation function to use.
+        dropout: Dropout probability for the base MLP path.
+        lora_rank: LoRA rank passed to ResidualMLP blocks.
+        lora_alpha: LoRA alpha passed to ResidualMLP blocks.
+        lora_dropout: LoRA dropout passed to ResidualMLP blocks.
     """
 
     def __init__(
@@ -136,6 +266,9 @@ class MultiBlockRegressor(torch.nn.Module):
         num_layers_per_block: int = 2,
         activation: str = "tanh",
         dropout: float = 0.1,
+        lora_rank: int = 0,  # Add LoRA parameters
+        lora_alpha: int = 32,
+        lora_dropout: float = 0.0,
     ):
         super().__init__()
 
@@ -143,8 +276,9 @@ class MultiBlockRegressor(torch.nn.Module):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         self.num_blocks = num_blocks
-        self.dropout = dropout
-        # Create the blocks
+        self.dropout = dropout  # Base MLP dropout
+        self.lora_rank = lora_rank  # Store LoRA rank
+        # Create the blocks using the modified ResidualMLP, passing LoRA parameters
         self.blocks = nn.ModuleList()
 
         # First block takes the input dimension
@@ -154,6 +288,9 @@ class MultiBlockRegressor(torch.nn.Module):
             hidden_dim=hidden_dim,
             activation=activation,
             dropout=dropout,
+            lora_rank=lora_rank,  # Pass LoRA params
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
         )
         self.blocks.append(first_block)
         setattr(self, f"block_0", first_block)
@@ -166,25 +303,22 @@ class MultiBlockRegressor(torch.nn.Module):
                 hidden_dim=hidden_dim,
                 activation=activation,
                 dropout=dropout,
+                lora_rank=lora_rank,  # Pass LoRA params
+                lora_alpha=lora_alpha,
+                lora_dropout=lora_dropout,
             )
             self.blocks.append(block)
             setattr(self, f"block_{i}", block)
 
         # Final output projection if needed
+        # Using standard Linear layer for output projection for simplicity, not adding LoRA here
         if input_dim != output_dim:
             self.output_proj = nn.Linear(input_dim, output_dim)
         else:
             self.output_proj = nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through the network.
-
-        Args:
-            x: Input tensor of shape (batch, input_dim).
-
-        Returns:
-            Output tensor of shape (batch, output_dim).
-        """
+        """Forward pass through the network."""
         # Pass through each block
         for block in self.blocks:
             x = block(x)
@@ -399,7 +533,7 @@ class MultiBlockRegressorDataModule(LightningDataModule):
         return self._test_dl
 
 
-# Inherit directly from LightningModule and implement methods needed
+# Update MultiBlockRegressorPT __init__ to read LoRA parameters from config
 class MultiBlockRegressorPT(LightningModule):
     """A multi-block regressor wrapped as a Lightning Module.
 
@@ -411,31 +545,40 @@ class MultiBlockRegressorPT(LightningModule):
         super().__init__()
 
         # Store the config received. This config is expected to contain
-        # 'arch', 'optim', and dataset keys at its root level
+        # 'arch', 'optim', and potentially 'adapter' and dataset keys
         self.cfg = cfg
 
-        # Now create the regressor as a member variable
         # Access architectural parameters from cfg.arch
+        arch_cfg = cfg.arch
+
+        # Access LoRA parameters from cfg.adapter (if they exist)
+        # Provide default values if adapter config is missing
+        adapter_cfg = cfg.get(
+            "adapter",
+            OmegaConf.create({"lora_rank": 0, "lora_alpha": 32, "lora_dropout": 0.0}),
+        )
+
+        # Now create the regressor as a member variable
+        # Pass the architectural and LoRA parameters down to the regressor
         self.regressor = MultiBlockRegressor(
-            input_dim=cfg.arch.input_dim,
-            hidden_dim=cfg.arch.hidden_dim,
-            output_dim=cfg.arch.output_dim,
-            num_blocks=cfg.arch.num_blocks,
-            num_layers_per_block=cfg.arch.num_layers_per_block,
-            activation=cfg.arch.activation,
-            dropout=cfg.arch.dropout,
+            input_dim=arch_cfg.input_dim,
+            hidden_dim=arch_cfg.hidden_dim,
+            output_dim=arch_cfg.output_dim,
+            num_blocks=arch_cfg.num_blocks,
+            num_layers_per_block=arch_cfg.num_layers_per_block,
+            activation=arch_cfg.activation,
+            dropout=arch_cfg.dropout,  # Base MLP dropout
+            # Pass LoRA specific parameters
+            lora_rank=adapter_cfg.lora_rank,
+            lora_alpha=adapter_cfg.lora_alpha,
+            lora_dropout=adapter_cfg.lora_dropout,
         )
 
         # Define the loss function
         self.criterion = nn.MSELoss()
 
-        # Create dataloaders
-        # These will be handled by the DataModule, so these attributes aren't strictly needed here
-        # self._train_dl = None
-        # self._validation_dl = None
-        # self._test_dl = None
-
         # Important: Save hyperparameters! This makes them appear in TensorBoard HPARAMS tab
+        # Include adapter config in hyperparameters by saving the entire config
         self.save_hyperparameters(cfg)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -466,12 +609,58 @@ class MultiBlockRegressorPT(LightningModule):
         self.log("test_loss", loss, prog_bar=True)
         return loss
 
+    # Modify configure_optimizers to train only LoRA parameters and biases when LoRA is enabled
     def configure_optimizers(self):
         optim_cfg = self.cfg.optim
-        optimizer = torch.optim.Adam(
-            self.parameters(), lr=optim_cfg.lr, weight_decay=optim_cfg.weight_decay
+
+        # Determine if LoRA is enabled based on the lora_rank parameter in the config
+        lora_enabled = (
+            self.cfg.get("adapter", OmegaConf.create({"lora_rank": 0})).lora_rank > 0
         )
 
+        if lora_enabled:
+            print(
+                "LoRA is enabled. Configuring optimizer to train only LoRA parameters and biases."
+            )
+            # Freeze all parameters initially
+            for param in self.parameters():
+                param.requires_grad = False
+
+            # Unfreeze parameters that are part of the LoraLinear layers (lora_a, lora_b)
+            # and the biases of the base linear layers within LoraLinear if bias is used
+            trainable_params = []
+            for name, param in self.named_parameters():
+                # Check if the parameter belongs to a LoraLinear layer's lora_a or lora_b weights
+                # or if it's the bias of the base linear layer within LoraLinear and requires grad
+                if (
+                    "lora_a" in name
+                    or "lora_b" in name
+                    or ("linear.bias" in name and param.requires_grad)
+                ):
+                    param.requires_grad = True  # Ensure they are trainable
+                    trainable_params.append(param)
+                    # print(f"Parameter '{name}' is trainable (LoRA or bias)")
+                # else:
+                # print(f"Parameter '{name}' is frozen")
+            print(f"Number of trainable parameters: {len(trainable_params)}")
+            if not trainable_params:
+                logging.warning(
+                    "No trainable parameters found when LoRA is enabled. Check model structure and parameter naming."
+                )
+        else:
+            print(
+                "LoRA is disabled. Configuring optimizer to train all model parameters."
+            )
+            # If LoRA is disabled, train all parameters of the model
+            trainable_params = self.parameters()
+
+        optimizer = torch.optim.Adam(
+            trainable_params,  # Pass the determined set of trainable parameters
+            lr=optim_cfg.lr,
+            weight_decay=optim_cfg.get("weight_decay", 0.0),
+        )
+
+        # Configure learning rate scheduler if specified
         if (
             hasattr(optim_cfg, "sched")
             and OmegaConf.select(optim_cfg, "sched.name") is not None
@@ -479,9 +668,19 @@ class MultiBlockRegressorPT(LightningModule):
             scheduler_cfg = optim_cfg.sched
             if scheduler_cfg.name == "CosineAnnealing":
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=scheduler_cfg.T_max, eta_min=scheduler_cfg.min_lr
+                    optimizer,
+                    T_max=scheduler_cfg.T_max,
+                    eta_min=scheduler_cfg.min_lr,
                 )
-                return {"optimizer": optimizer, "lr_scheduler": scheduler}
+                return {
+                    "optimizer": optimizer,
+                    "lr_scheduler": {
+                        "scheduler": scheduler,
+                        "monitor": "val_loss",  # Monitor validation loss for scheduling
+                        "interval": "epoch",
+                        "frequency": 1,
+                    },
+                }
             else:
                 raise NotImplementedError(
                     f"Scheduler {scheduler_cfg.name} not implemented"
@@ -502,12 +701,14 @@ if __name__ == "__main__":
     seed_everything(42, workers=True)
 
     # Load the full configuration from the YAML file
+    # config = OmegaConf.load("config/multiblock_config.yaml")
     config = OmegaConf.load("config/multiblock_config.yaml")
 
     # Get specific config sections
-    config_model = config.model
+    # config_model = config.model # Not strictly needed as we pass the full config structure
     config_data = config.data
     config_trainer = config.trainer
+    config_adapter = config.get("adapter", None)  # Get adapter config if it exists
 
     # Get the resume_from_checkpoint path from the TOP LEVEL of the config
     resume_from_checkpoint_path = config.get("resume_from_checkpoint")
@@ -527,9 +728,10 @@ if __name__ == "__main__":
     # Instantiate the DataModule - The trainer will call setup later
     data_module = MultiBlockRegressorDataModule(cfg=config_data)
 
-    # Instantiate the Model - Needs arch, optim, and potentially dataset configs
-    # Create a merged config for the model constructor if its __init__ or methods
-    # require arch, optim, and dataset configs at the top level of its cfg.
+    # Instantiate the Model - Needs arch, optim, and potentially adapter configs
+    # Create a merged config structure for the model constructor.
+    # The MultiBlockRegressorPT constructor expects 'arch', 'optim', and optionally 'adapter'
+    # at the root level of the cfg passed to it.
     model_init_cfg = OmegaConf.create()
 
     # Check and assign arch config
@@ -549,56 +751,31 @@ if __name__ == "__main__":
             {}
         )  # Provide empty dict config if optional
 
-    # Check and assign dataset configs to model_init_cfg if the model needs them internally
-    # Note: With DataModule, the model typically doesn't need data config internally.
-    # Consider if this is necessary based on your ModelPT class design.
-    # If ModelPT does not need data config, you can remove this section.
-    if "data" in config:
-        if "train_ds" in config.data:
-            model_init_cfg.train_ds = config.data.train_ds
-        else:
-            logging.warning(
-                "Warning: 'data.train_ds' not found in config. Model's internal training data setup might fail."
-            )
-            model_init_cfg.train_ds = None  # Set to None if missing
-
-        if "validation_ds" in config.data:
-            model_init_cfg.validation_ds = config.data.validation_ds
-        else:
-            logging.warning(
-                "Warning: 'data.validation_ds' not found in config. Model's internal validation data setup might fail."
-            )
-            model_init_cfg.validation_ds = None  # Set to None if missing
-
-        if "test_ds" in config.data:
-            model_init_cfg.test_ds = config.data.test_ds
-        else:
-            logging.warning(
-                "Warning: 'data.test_ds' not found in config. Model's internal test data setup might fail."
-            )
-            model_init_cfg.test_ds = None  # Set to None if missing
+    # Assign adapter config if it exists
+    if config_adapter is not None:
+        model_init_cfg.adapter = config_adapter
     else:
-        logging.warning(
-            "Warning: 'data' section not found in config. Model's internal data setup might fail."
+        # If no adapter config, ensure default LoRA parameters are used (lora_rank=0)
+        model_init_cfg.adapter = OmegaConf.create(
+            {"lora_rank": 0, "lora_alpha": 32, "lora_dropout": 0.0}
         )
-        # Provide empty dict configs for datasets if the section is missing entirely
-        model_init_cfg.train_ds = None
-        model_init_cfg.validation_ds = None
-        model_init_cfg.test_ds = None
+        print("No 'adapter' section found in config. LoRA is disabled by default.")
+
+    # Note: Data config is handled by the DataModule, not the ModelPT init in this structure.
+    # Remove the checks and assignments for train_ds, validation_ds, test_ds to model_init_cfg
+    # from the previous version of the __main__ block, as they are handled by the DataModule now.
+    # This simplifies the model_init_cfg passed to MultiBlockRegressorPT.
 
     model = MultiBlockRegressorPT(cfg=model_init_cfg)  # Pass the merged config
 
-    # Setup loss history callback FIRST
-    # Keep LossHistory if you still want to access losses as a list after training,
-    # but logging will now primarily be handled by TensorBoard.
+    # Setup callbacks
+    # LossHistory and PredictionPlotter remain useful.
     loss_history = LossHistory()
 
-    # Setup prediction plotter callback
-    # Pass the file path to the test data config AND the loss_history instance
-    # Check if test_ds exists and has file_path before creating plotter
+    # Setup prediction plotter callback - Ensure it gets the test data path from the main config
     test_data_path_for_plotter = None
     if (
-        "data" in config
+        "data" in config  # Check main data config
         and "test_ds" in config.data
         and "file_path" in config.data.test_ds
     ):
@@ -608,49 +785,43 @@ if __name__ == "__main__":
             "Test data file path not found in config. Prediction plotting will be skipped."
         )
 
-    prediction_plotter = None  # Initialize to None
+    prediction_plotter = None
     if test_data_path_for_plotter is not None:
-        # Use .get() for plot_interval from config_trainer
         plot_interval_cfg = config_trainer.get("plot_interval", 2)
         prediction_plotter = PredictionPlotter(
             test_data_path=test_data_path_for_plotter,
-            loss_history_callback=loss_history,  # Pass the LossHistory instance
+            loss_history_callback=loss_history,
             plot_interval=plot_interval_cfg,
         )
 
-    # Setup ModelCheckpoint callback - Keep this for saving model checkpoints
-    checkpoint_callback = None  # Initialize to None
-    # Check if 'checkpoint' section exists under trainer
+    # Setup ModelCheckpoint callback - using config_trainer
+    checkpoint_callback = None
     if "checkpoint" in config_trainer:
         checkpoint_cfg = config_trainer.checkpoint
         checkpoint_dirpath = checkpoint_cfg.get("dirpath", "checkpoints/")
         checkpoint_every_n_epochs = checkpoint_cfg.get("every_n_epochs")
-        checkpoint_save_last = checkpoint_cfg.get(
-            "save_last", False
-        )  # Default to False if not specified
+        checkpoint_save_last = checkpoint_cfg.get("save_last", False)
 
-        # Create the directory if it doesn't exist
         os.makedirs(checkpoint_dirpath, exist_ok=True)
 
-        # Create the ModelCheckpoint callback instance
         if checkpoint_every_n_epochs is not None:
             print(
                 f"Setting up checkpointing every {checkpoint_every_n_epochs} epochs to {checkpoint_dirpath}"
             )
             checkpoint_callback = ModelCheckpoint(
                 dirpath=checkpoint_dirpath,
-                filename="{epoch}",  # Include epoch in filename
+                filename="{epoch}",
                 every_n_epochs=checkpoint_every_n_epochs,
                 save_last=checkpoint_save_last,
-                save_top_k=-1,  # Save all checkpoints when using every_n_epochs
+                save_top_k=-1,
             )
         elif checkpoint_save_last:
             print(f"Setting up checkpointing to save last only to {checkpoint_dirpath}")
             checkpoint_callback = ModelCheckpoint(
                 dirpath=checkpoint_dirpath,
-                filename="last",  # Standard filename for the last checkpoint
+                filename="last",
                 save_last=True,
-                save_top_k=0,  # Do not save top k based on a monitor
+                save_top_k=0,
             )
         else:
             logging.warning(
@@ -658,77 +829,52 @@ if __name__ == "__main__":
             )
 
     # Create TensorBoard Logger instance
-    # Logs will be saved to ./logs/tensorboard/multiblock_regressor_experiment/version_x
     tensorboard_logger = TensorBoardLogger(
         "logs", name="multiblock_regressor_experiment"
     )
     print(f"TensorBoard logs will be saved to: {tensorboard_logger.log_dir}")
 
-    # Collect all active callbacks into a list
-    callbacks_list = [
-        loss_history
-    ]  # Keep LossHistory if needed for PredictionPlotter or post-train analysis
+    # Collect all active callbacks
+    callbacks_list = [loss_history]
     callbacks_list = cast(list[Callback], callbacks_list)
     if prediction_plotter is not None:
         callbacks_list.append(prediction_plotter)
     if checkpoint_callback is not None:
         callbacks_list.append(checkpoint_callback)
 
-    # profiler = PyTorchProfiler()
+    # Setup profiler
     profiler = PyTorchProfiler(filename="prof.out")
-    # Requires CUDA and nvcc
-    # profiler = PyTorchProfiler(emit_nvtx=True)
 
+    # Instantiate Trainer using config_trainer and collected callbacks/logger
     trainer = Trainer(
         profiler=profiler,
         max_epochs=config_trainer.get("max_epochs", 10),
-        # logger=False, # REMOVE THIS! Let the logger handle logging
-        logger=tensorboard_logger,  # Pass the TensorBoard logger
-        enable_progress_bar=True,
-        accelerator=config_trainer.get(
-            "accelerator", "auto"
-        ),  # Use .get() for accelerator and devices
+        logger=tensorboard_logger,
+        enable_progress_bar=config_trainer.get("enable_progress_bar", True),
+        accelerator=config_trainer.get("accelerator", "auto"),
         devices=config_trainer.get("devices", "auto"),
-        strategy=config_trainer.get(
-            "strategy", "auto"
-        ),  # Use .get() for strategy and precision
+        strategy=config_trainer.get("strategy", "auto"),
         precision=config_trainer.get("precision", 32),
         num_nodes=config_trainer.get("num_nodes", 1),
         log_every_n_steps=config_trainer.get("log_every_n_steps", 5),
         check_val_every_n_epoch=config_trainer.get("check_val_every_n_epoch", 1),
         benchmark=config_trainer.get("benchmark", False),
-        callbacks=callbacks_list,  # Use the collected list of callbacks
+        callbacks=callbacks_list,
     )
-
-    # Compile the model
-    # model = torch.compile(
-    #     model,
-    #     # fullgraph=False,
-    #     # dynamic=True,
-    # )
 
     # Train the model
     start = time.time()
-    # Pass the datamodule to trainer.fit - the trainer will call its setup methods
-    # Remove the model's internal setup calls here, as the trainer uses the DataModule
-
-    # Start training
-    # Use trainer.fit with the datamodule and the resume_from_checkpoint_path
+    # Use trainer.fit with the model, datamodule, and optional checkpoint path
     trainer.fit(
         model,
         datamodule=data_module,
-        ckpt_path=resume_from_checkpoint_path,  # Use the path from config or None
+        ckpt_path=resume_from_checkpoint_path,
     )
 
     end = time.time()
     print(f"Training completed in {end - start:.2f} seconds")
 
-    # Save the model (optional, can rely on checkpointing)
-    # Use a different name or remove if you rely entirely on Lightning checkpointing
-    # model.save_to("base_multiblock_model.pt")
-    # print("Base model saved as 'base_multiblock_model.pt'.")
-
-    # Print final losses if needed - You can get these from the logger or LossHistory callback if kept
+    # Print final losses
     print(
         f"Final Training Losses: {loss_history.train_losses[-1] if loss_history.train_losses else 'N/A'}"
     )
@@ -737,5 +883,12 @@ if __name__ == "__main__":
     )
 
     # Perform final test evaluation run if test data is available
-    # This will use the DataModule's test_dataloader and setup('test') will be called by the trainer
+    # trainer.test will automatically use the test_dataloader from the datamodule
     trainer.test(model, datamodule=data_module)
+
+    # Save the final model if a path is specified in the config
+    if hasattr(config, "nemo_path") and config.nemo_path is not None:
+        # Note: This saves the entire model state dictionary, including LoRA weights if present.
+        # If you only want to save LoRA weights, you'd need custom logic here.
+        model.save_to(config.nemo_path)
+        logging.info(f"Model saved to {config.nemo_path}")
