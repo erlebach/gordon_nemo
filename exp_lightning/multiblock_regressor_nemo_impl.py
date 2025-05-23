@@ -6,7 +6,7 @@ adapted from the Lightning implementation to work with NeMo's framework.
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,15 +24,16 @@ class NeMoLossHistory(Callback):
 
     def __init__(self):
         super().__init__()
-        self.train_losses: List[float] = []
-        self.val_losses: List[float] = []
+        self.train_losses: list[float] = []
+        self.val_losses: list[float] = []
 
     def on_train_epoch_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        """Called when the train epoch ends.
+        """Call when the train epoch ends.
 
         Args:
             trainer: The trainer instance.
             pl_module: The LightningModule instance.
+
         """
         # Get train loss from logged metrics
         train_loss = trainer.callback_metrics.get("train_loss_epoch")
@@ -303,8 +304,8 @@ class NeMoPredictionPlotter(Callback):
 
 
 def create_nemo_callbacks(
-    config: Dict[str, Any], test_data_path: Optional[str] = None
-) -> List[Callback]:
+    config: dict[str, Any], test_data_path: str | None = None
+) -> list[Callback]:
     """Create NeMo-compatible callbacks based on configuration.
 
     Args:
@@ -348,4 +349,4 @@ def setup_nemo_logging():
     )
 
     # Set NeMo logging level
-    nemo_logging.setLevel(logging.INFO)
+    nemo_logging.setLevel(nemo_logging.INFO)
