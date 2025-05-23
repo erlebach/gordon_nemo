@@ -7,6 +7,7 @@ conventions and integrates with Hydra for configuration management.
 
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import lightning.pytorch as pl
@@ -29,22 +30,16 @@ from torch.utils.data import DataLoader, TensorDataset
 
 
 class LoraLinear(nn.Module):
-    """Implements a standard nn.Linear layer augmented with Low-Rank Adaptation (LoRA).
-
-    When `lora_rank > 0`, it adds small, trainable low-rank matrices (`lora_a`, `lora_b`)
-    to the base linear operation. The output of the LoRA path (`x @ lora_a @ lora_b`)
-    is scaled by `lora_alpha / lora_rank` before being added to the base linear output
-    (`x @ linear.weight.T + linear.bias`). This allows for efficient fine-tuning by
-    only training the low-rank matrices and optionally the bias of the base layer.
+    """A Linear layer with LoRA adaptation and optional gating.
 
     Args:
         in_features: Input features.
         out_features: Output features.
-        lora_rank: The rank of the low-rank adaptation matrices. If 0, LoRA is disabled
-            and only the base linear layer is used.
+        lora_rank: The rank of the low-rank adaptation matrices.
         lora_alpha: Scaling factor for the adapter output.
         lora_dropout: Dropout probability for the LoRA path.
         bias: Whether to use bias in the base linear layer.
+        gating_function: Type of gating function ('identity' or 'sigmoid').
 
     """
 
@@ -56,6 +51,7 @@ class LoraLinear(nn.Module):
         lora_alpha: int,
         lora_dropout: float = 0.0,
         bias: bool = True,
+        gating_function: str = "identity",
     ):
         super().__init__()
         self.in_features = in_features
@@ -63,12 +59,14 @@ class LoraLinear(nn.Module):
         self.lora_rank = lora_rank
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
+        self.gating_function = gating_function.lower()
 
         # Base linear layer
         self.linear = nn.Linear(in_features, out_features, bias=bias)
 
-        if lora_rank > 0:
-            # Look into this scaling formula
+        self.is_lora = lora_rank > 0
+
+        if self.is_lora:
             self.scaling = lora_alpha / lora_rank
 
             # LoRA matrices
@@ -78,22 +76,52 @@ class LoraLinear(nn.Module):
             # Dropout for LoRA path
             self.dropout = nn.Dropout(p=lora_dropout)
 
+            # Gating mechanism
+            if self.gating_function != "identity":
+                # Gating layer: maps input features to output features dimension
+                # Typically a linear layer followed by an activation
+                self.gating_layer = nn.Linear(in_features, out_features)
+                if self.gating_function == "sigmoid":
+                    self.gating_activation = nn.Sigmoid()
+                    print("==> Gating function: Sigmoid")
+                # Add other gating functions here if needed
+                else:
+                    raise ValueError(
+                        f"Unsupported gating_function: {gating_function}. "
+                        "Supported: 'identity', 'sigmoid'."
+                    )
+
+            self.is_gating = (
+                self.gating_function != "identity" and self.gating_layer is not None
+            )
+
             # Initialize LoRA weights
             nn.init.kaiming_uniform_(self.lora_a.weight, a=5**0.5)
             nn.init.zeros_(self.lora_b.weight)
 
-            # Set trainability
+            # Initialize gating layer weights (optional, default init often fine)
+            if self.gating_layer:
+                nn.init.kaiming_uniform_(self.gating_layer.weight, a=5**0.5)
+                if self.gating_layer.bias is not None:
+                    nn.init.zeros_(self.gating_layer.bias)
+
+            # Set trainability (LoRA weights and bias of base linear layer by default)
+            # Gating layer weights are also trainable if gating is enabled
             self.lora_a.weight.requires_grad = True
             self.lora_b.weight.requires_grad = True
             if bias and self.linear.bias is not None:
                 self.linear.bias.requires_grad = True
-            self.is_lora = True
+            if self.gating_layer:
+                self.gating_layer.weight.requires_grad = True
+                if self.gating_layer.bias is not None:
+                    self.gating_layer.bias.requires_grad = True
         else:
+            self.scaling = 1.0
             self.linear.weight.requires_grad = True
             self.is_lora = False
 
     def forward(self, x: Tensor) -> Tensor:
-        """Forward pass through the LoRA linear layer.
+        """Forward pass through the LoRA linear layer with optional gating.
 
         Args:
             x: Input tensor.
@@ -105,15 +133,22 @@ class LoraLinear(nn.Module):
         base_output = self.linear(x)
 
         if self.is_lora:
-            # Apply the adapter
             lora_output = self.lora_b(self.lora_a(self.dropout(x))) * self.scaling
+
+            # Apply gating
+            if self.is_gating:
+                # Compute gating values from the input x
+                gating_values = self.gating_activation(self.gating_layer(x))
+                # Apply Hadamard product
+                lora_output = lora_output * gating_values
+
             return base_output + lora_output
         else:
             return base_output
 
 
 class MLP(nn.Module):
-    """MLP layer with optional LoRA adaptation.
+    """MLP layer with optional LoRA adaptation and gating.
 
     Args:
         input_dim: Input dimension.
@@ -124,6 +159,7 @@ class MLP(nn.Module):
         lora_rank: The rank of the low-rank adaptation matrices.
         lora_alpha: Scaling factor for the LoRA adapter output.
         lora_dropout: Dropout probability for the LoRA paths.
+        gating_function: Type of gating function for LoRA layers ('identity' or 'sigmoid').
 
     """
 
@@ -137,7 +173,8 @@ class MLP(nn.Module):
         lora_rank: int = 0,
         lora_alpha: int = 32,
         lora_dropout: float = 0.0,
-    ) -> None:
+        gating_function: str = "identity",
+    ):
         super().__init__()
 
         self.fc1 = LoraLinear(
@@ -147,6 +184,7 @@ class MLP(nn.Module):
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             bias=True,
+            gating_function=gating_function,
         )
 
         self.dropout1 = nn.Dropout(dropout)
@@ -167,6 +205,7 @@ class MLP(nn.Module):
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             bias=True,
+            gating_function=gating_function,
         )
 
     def forward(self, x: Tensor) -> Tensor:
@@ -187,7 +226,7 @@ class MLP(nn.Module):
 
 
 class ResidualMLP(nn.Module):
-    """Residual MLP module using potentially LoRA-modified MLP layers.
+    """Residual MLP module using potentially LoRA-modified MLP layers with gating.
 
     Args:
         dim: Feature dimension.
@@ -198,6 +237,7 @@ class ResidualMLP(nn.Module):
         lora_rank: LoRA rank passed to MLP layers.
         lora_alpha: LoRA alpha passed to MLP layers.
         lora_dropout: LoRA dropout passed to MLP layers.
+        gating_function: Type of gating function for MLP layers.
 
     """
 
@@ -211,6 +251,7 @@ class ResidualMLP(nn.Module):
         lora_rank: int = 0,
         lora_alpha: int = 32,
         lora_dropout: float = 0.0,
+        gating_function: str = "identity",
     ):
         super().__init__()
 
@@ -229,6 +270,7 @@ class ResidualMLP(nn.Module):
                     lora_rank=lora_rank,
                     lora_alpha=lora_alpha,
                     lora_dropout=lora_dropout,
+                    gating_function=gating_function,
                 )
                 for _ in range(num_layers)
             ]
@@ -252,7 +294,7 @@ class ResidualMLP(nn.Module):
 
 
 class MultiBlockRegressor(nn.Module):
-    """A multi-block regressor core architecture with optional LoRA support.
+    """A multi-block regressor core architecture with optional LoRA support and gating.
 
     Args:
         input_dim: Input dimension.
@@ -265,7 +307,7 @@ class MultiBlockRegressor(nn.Module):
         lora_rank: LoRA rank passed to ResidualMLP blocks.
         lora_alpha: LoRA alpha passed to ResidualMLP blocks.
         lora_dropout: LoRA dropout passed to ResidualMLP blocks.
-
+        gating_function: Type of gating function for ResidualMLP blocks.
     """
 
     def __init__(
@@ -280,6 +322,7 @@ class MultiBlockRegressor(nn.Module):
         lora_rank: int = 0,
         lora_alpha: int = 32,
         lora_dropout: float = 0.0,
+        gating_function: str = "identity",
     ):
         super().__init__()
 
@@ -289,6 +332,7 @@ class MultiBlockRegressor(nn.Module):
         self.num_blocks = num_blocks
         self.dropout = dropout
         self.lora_rank = lora_rank
+        self.gating_function = gating_function
 
         self.blocks = nn.ModuleList()
 
@@ -303,6 +347,7 @@ class MultiBlockRegressor(nn.Module):
                 lora_rank=lora_rank,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
+                gating_function=gating_function,
             )
             self.blocks.append(block)
             setattr(self, f"block_{i}", block)
@@ -329,25 +374,33 @@ class MultiBlockRegressor(nn.Module):
 
 
 class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
-    """NeMo-compatible MultiBlock Regressor with LoRA support.
+    """NeMo-compatible MultiBlock Regressor with LoRA support and gating.
 
     This class wraps the MultiBlockRegressor into NeMo's ModelPT framework,
     enabling it to work with Hydra configuration and NeMo's experiment management.
 
     Args:
         cfg: Configuration object.
-        trainer: PyTorch Lightning trainer instance.
+        trainer: PyTorch Lightning trainer instance or None.
 
     """
 
     def __init__(self, cfg: DictConfig, trainer: pl.Trainer | None = None):
+        # Pass trainer to superclass only if it's not None
         super().__init__(cfg=cfg, trainer=trainer)
 
         # Extract configuration sections
         arch_cfg = cfg.arch
         adapter_cfg = cfg.get(
             "adapter",
-            OmegaConf.create({"lora_rank": 0, "lora_alpha": 32, "lora_dropout": 0.0}),
+            OmegaConf.create(
+                {
+                    "lora_rank": 0,
+                    "lora_alpha": 32,
+                    "lora_dropout": 0.0,
+                    "gating_function": "identity",
+                }
+            ),
         )
 
         # Create the core regressor model
@@ -362,6 +415,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             lora_rank=adapter_cfg.lora_rank,
             lora_alpha=adapter_cfg.lora_alpha,
             lora_dropout=adapter_cfg.lora_dropout,
+            gating_function=adapter_cfg.gating_function,
         )
 
         # Loss function
@@ -545,8 +599,9 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
 
         Args:
             val_data_config: Configuration for validation data.
+
         """
-        self._validation_dl = self._get_dataloader_from_config(
+        self._validation_dl: DataLoader | None = self._get_dataloader_from_config(
             val_data_config, shuffle=False
         )
 
@@ -555,13 +610,14 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
 
         Args:
             test_data_config: Configuration for test data.
+
         """
-        self._test_dl = self._get_dataloader_from_config(
+        self._test_dl: DataLoader | None = self._get_dataloader_from_config(
             test_data_config, shuffle=False
         )
 
     def _get_dataloader_from_config(
-        self, config: DictConfig | dict, shuffle: bool = False
+        self, config: DictConfig, shuffle: bool = False
     ) -> DataLoader | None:
         """Create a dataloader from configuration.
 
@@ -627,7 +683,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         return []
 
     # Adapter mixin methods
-    def add_adapter(self, name: str, cfg: DictConfig | dict):
+    def add_adapter(self, name: str, cfg: DictConfig):
         """Add an adapter to the model.
 
         Args:
@@ -690,10 +746,11 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
 
 @hydra_runner(config_path="config", config_name="multiblock_nemo_config")
 def main(cfg: DictConfig) -> None:
-    """Main training function using Hydra configuration.
+    """Execute training function using Hydra configuration.
 
     Args:
         cfg: Hydra configuration object.
+
     """
     # Setup logging
     setup_nemo_logging()
@@ -701,18 +758,19 @@ def main(cfg: DictConfig) -> None:
 
     # Check if data files exist
     train_data_path = cfg.model.train_ds.file_path
-    if not os.path.exists(train_data_path):
+    if not Path(train_data_path).exists():
         logging.error(f"Training data not found at {train_data_path}")
         logging.info("Please ensure data files are generated before training.")
         return
 
     # Create trainer
+    # Trainer configuration comes from cfg.trainer
     trainer = pl.Trainer(**cfg.trainer)
 
     # Setup experiment manager
     exp_manager(trainer, cfg.get("exp_manager", None))
 
-    # Manually add ModelCheckpoint if needed (since we disabled automatic creation)
+    # Manually add ModelCheckpoint if needed (since we disabled automatic creation in config)
     from lightning.pytorch.callbacks import ModelCheckpoint
 
     checkpoint_callback = ModelCheckpoint(
@@ -722,6 +780,7 @@ def main(cfg: DictConfig) -> None:
         filename="{epoch}-{val_loss:.3f}",
         save_last=True,
     )
+    # Access callbacks attribute directly - seems the linter might be overly cautious here or expects a specific Trainer subclass
     trainer.callbacks.append(checkpoint_callback)
 
     # Create model
@@ -729,10 +788,12 @@ def main(cfg: DictConfig) -> None:
 
     # Create custom callbacks
     test_data_path = cfg.model.get("test_ds", {}).get("file_path")
+    # Pass the full DictConfig to create_nemo_callbacks
     custom_callbacks = create_nemo_callbacks(cfg, test_data_path)
 
     # Add custom callbacks to trainer
     for callback in custom_callbacks:
+        # Access callbacks attribute directly
         trainer.callbacks.append(callback)
 
     # Training
