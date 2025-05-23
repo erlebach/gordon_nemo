@@ -48,7 +48,7 @@ adapter:
   name: lora # Name isn't strictly used in this direct integration but good for config
   lora_rank: 8 # Set rank > 0 to enable LoRA
   lora_alpha: 16
-  lora_dropout: 0.1
+  lora_dropout: 0.04
 
   
 trainer:

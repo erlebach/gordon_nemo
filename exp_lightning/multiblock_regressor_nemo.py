@@ -7,20 +7,16 @@ conventions and integrates with Hydra for configuration management.
 
 import os
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import lightning.pytorch as pl
 import numpy as np
 import torch
 import torch.nn as nn
 from exp_lightning.multiblock_regressor_nemo_impl import (
-    NeMoLossHistory,
-    NeMoPredictionPlotter,
     create_nemo_callbacks,
     setup_nemo_logging,
 )
-from hydra.utils import instantiate
-from jaxtyping import Float
 from nemo.core import ModelPT, adapter_mixins
 from nemo.core.classes.common import typecheck
 from nemo.core.config import hydra_runner
@@ -33,15 +29,23 @@ from torch.utils.data import DataLoader, TensorDataset
 
 
 class LoraLinear(nn.Module):
-    """A Linear layer with LoRA adaptation.
+    """Implements a standard nn.Linear layer augmented with Low-Rank Adaptation (LoRA).
+
+    When `lora_rank > 0`, it adds small, trainable low-rank matrices (`lora_a`, `lora_b`)
+    to the base linear operation. The output of the LoRA path (`x @ lora_a @ lora_b`)
+    is scaled by `lora_alpha / lora_rank` before being added to the base linear output
+    (`x @ linear.weight.T + linear.bias`). This allows for efficient fine-tuning by
+    only training the low-rank matrices and optionally the bias of the base layer.
 
     Args:
         in_features: Input features.
         out_features: Output features.
-        lora_rank: The rank of the low-rank adaptation matrices.
+        lora_rank: The rank of the low-rank adaptation matrices. If 0, LoRA is disabled
+            and only the base linear layer is used.
         lora_alpha: Scaling factor for the adapter output.
         lora_dropout: Dropout probability for the LoRA path.
         bias: Whether to use bias in the base linear layer.
+
     """
 
     def __init__(
@@ -64,6 +68,7 @@ class LoraLinear(nn.Module):
         self.linear = nn.Linear(in_features, out_features, bias=bias)
 
         if lora_rank > 0:
+            # Look into this scaling formula
             self.scaling = lora_alpha / lora_rank
 
             # LoRA matrices
@@ -82,12 +87,10 @@ class LoraLinear(nn.Module):
             self.lora_b.weight.requires_grad = True
             if bias and self.linear.bias is not None:
                 self.linear.bias.requires_grad = True
+            self.is_lora = True
         else:
-            self.scaling = 1.0
-            self.lora_a = None
-            self.lora_b = None
-            self.dropout = None
             self.linear.weight.requires_grad = True
+            self.is_lora = False
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass through the LoRA linear layer.
@@ -97,10 +100,12 @@ class LoraLinear(nn.Module):
 
         Returns:
             Output tensor.
+
         """
         base_output = self.linear(x)
 
-        if self.lora_rank > 0 and self.lora_a is not None and self.lora_b is not None:
+        if self.is_lora:
+            # Apply the adapter
             lora_output = self.lora_b(self.lora_a(self.dropout(x))) * self.scaling
             return base_output + lora_output
         else:
@@ -119,6 +124,7 @@ class MLP(nn.Module):
         lora_rank: The rank of the low-rank adaptation matrices.
         lora_alpha: Scaling factor for the LoRA adapter output.
         lora_dropout: Dropout probability for the LoRA paths.
+
     """
 
     def __init__(
@@ -131,7 +137,7 @@ class MLP(nn.Module):
         lora_rank: int = 0,
         lora_alpha: int = 32,
         lora_dropout: float = 0.0,
-    ):
+    ) -> None:
         super().__init__()
 
         self.fc1 = LoraLinear(
@@ -171,6 +177,7 @@ class MLP(nn.Module):
 
         Returns:
             Output tensor.
+
         """
         x = self.fc1(x)
         x = self.dropout1(x)
@@ -191,6 +198,7 @@ class ResidualMLP(nn.Module):
         lora_rank: LoRA rank passed to MLP layers.
         lora_alpha: LoRA alpha passed to MLP layers.
         lora_dropout: LoRA dropout passed to MLP layers.
+
     """
 
     def __init__(
@@ -257,6 +265,7 @@ class MultiBlockRegressor(nn.Module):
         lora_rank: LoRA rank passed to ResidualMLP blocks.
         lora_alpha: LoRA alpha passed to ResidualMLP blocks.
         lora_dropout: LoRA dropout passed to ResidualMLP blocks.
+
     """
 
     def __init__(
@@ -328,9 +337,10 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
     Args:
         cfg: Configuration object.
         trainer: PyTorch Lightning trainer instance.
+
     """
 
-    def __init__(self, cfg: DictConfig, trainer: Optional[pl.Trainer] = None):
+    def __init__(self, cfg: DictConfig, trainer: pl.Trainer | None = None):
         super().__init__(cfg=cfg, trainer=trainer)
 
         # Extract configuration sections
@@ -364,7 +374,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         self._setup_dataloader_from_config(cfg)
 
     @property
-    def input_types(self) -> Dict[str, NeuralType]:
+    def input_types(self) -> dict[str, NeuralType]:
         """Define input neural types for NeMo.
 
         Returns:
@@ -373,7 +383,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         return {"x": NeuralType(("B", "T"), RegressionValuesType())}
 
     @property
-    def output_types(self) -> Dict[str, NeuralType]:
+    def output_types(self) -> dict[str, NeuralType]:
         """Define output neural types for NeMo.
 
         Returns:
@@ -410,7 +420,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        """Validation step.
+        """Execute a single validation step.
 
         Args:
             batch: Validation batch.
@@ -418,6 +428,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
 
         Returns:
             Validation loss.
+
         """
         x, y = batch
         y_hat = self(x=x)
@@ -426,7 +437,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         return loss
 
     def test_step(self, batch, batch_idx):
-        """Test step.
+        """Execute a single test step.
 
         Args:
             batch: Test batch.
@@ -441,11 +452,12 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         self.log("test_loss", loss, prog_bar=True)
         return loss
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> torch.optim.Optimizer | dict[str, Any]:
         """Configure the optimizer and optionally the learning rate scheduler.
 
         Returns:
             Optimizer or dictionary with optimizer and scheduler.
+
         """
         optim_cfg = self.cfg.optim
 
@@ -503,11 +515,12 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
 
         return optimizer
 
-    def _setup_dataloader_from_config(self, cfg: DictConfig):
-        """Setup data loaders from configuration.
+    def _setup_dataloader_from_config(self, cfg: DictConfig) -> None:
+        """Set up data loaders from configuration.
 
         Args:
             cfg: Configuration object.
+
         """
         if hasattr(cfg, "train_ds"):
             self.setup_training_data(cfg.train_ds)
@@ -516,17 +529,18 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         if hasattr(cfg, "test_ds"):
             self.setup_test_data(cfg.test_ds)
 
-    def setup_training_data(self, train_data_config: Union[DictConfig, Dict]):
-        """Setup training data loader.
+    def setup_training_data(self, train_data_config: DictConfig | dict):
+        """Set up training data loader.
 
         Args:
             train_data_config: Configuration for training data.
+
         """
         self._train_dl = self._get_dataloader_from_config(
             train_data_config, shuffle=True
         )
 
-    def setup_validation_data(self, val_data_config: Union[DictConfig, Dict]):
+    def setup_validation_data(self, val_data_config: DictConfig | dict):
         """Setup validation data loader.
 
         Args:
@@ -536,7 +550,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             val_data_config, shuffle=False
         )
 
-    def setup_test_data(self, test_data_config: Union[DictConfig, Dict]):
+    def setup_test_data(self, test_data_config: DictConfig | dict):
         """Setup test data loader.
 
         Args:
@@ -547,8 +561,8 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         )
 
     def _get_dataloader_from_config(
-        self, config: Union[DictConfig, Dict], shuffle: bool = False
-    ) -> Optional[DataLoader]:
+        self, config: DictConfig | dict, shuffle: bool = False
+    ) -> DataLoader | None:
         """Create a dataloader from configuration.
 
         Args:
@@ -591,20 +605,20 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             logging.error(f"Error creating dataloader from config: {e}")
             return None
 
-    def train_dataloader(self) -> Optional[DataLoader]:
+    def train_dataloader(self) -> DataLoader | None:
         """Return the training dataloader."""
         return getattr(self, "_train_dl", None)
 
-    def val_dataloader(self) -> Optional[DataLoader]:
+    def val_dataloader(self) -> DataLoader | None:
         """Return the validation dataloader."""
         return getattr(self, "_validation_dl", None)
 
-    def test_dataloader(self) -> Optional[DataLoader]:
+    def test_dataloader(self) -> DataLoader | None:
         """Return the test dataloader."""
         return getattr(self, "_test_dl", None)
 
     @classmethod
-    def list_available_models(cls) -> List[str]:
+    def list_available_models(cls) -> list[str]:
         """List available pretrained models.
 
         Returns:
@@ -613,7 +627,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         return []
 
     # Adapter mixin methods
-    def add_adapter(self, name: str, cfg: Union[DictConfig, Dict]):
+    def add_adapter(self, name: str, cfg: DictConfig | dict):
         """Add an adapter to the model.
 
         Args:
@@ -623,7 +637,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         super().add_adapter(name, cfg)
         logging.info(f"Added adapter: {name}")
 
-    def get_enabled_adapters(self) -> List[str]:
+    def get_enabled_adapters(self) -> list[str]:
         """Get the list of enabled adapters.
 
         Returns:
@@ -639,7 +653,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         """
         return super().is_adapter_available()
 
-    def set_enabled_adapters(self, name: Optional[str] = None, enabled: bool = True):
+    def set_enabled_adapters(self, name: str | None = None, enabled: bool = True):
         """Enable or disable adapters.
 
         Args:
@@ -649,7 +663,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         super().set_enabled_adapters(name, enabled)
 
     @property
-    def adapter_module_names(self) -> List[str]:
+    def adapter_module_names(self) -> list[str]:
         """Get the list of adapter module names.
 
         Returns:
