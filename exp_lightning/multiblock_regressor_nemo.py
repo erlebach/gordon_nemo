@@ -223,10 +223,10 @@ class MLP(nn.Module):
             Output tensor.
 
         """
-        x = self.fc1(x)
+        x = self.fc1(x=x)
         x = self.dropout1(x)
         x = self.activation(x)
-        x = self.fc2(x)
+        x = self.fc2(x=x)
         return x
 
 
@@ -292,7 +292,7 @@ class ResidualMLP(nn.Module):
         """
         input_x = x
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x=x)
             x = x + input_x  # Residual connection
             input_x = x
         return x
@@ -376,7 +376,7 @@ class MultiBlockRegressor(nn.Module):
             Output tensor of shape (batch, output_dim).
         """
         for block in self.blocks:
-            x = block(x)
+            x = block(x=x)
         x = self.output_proj(x)
         return x
 
@@ -494,7 +494,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             # Assume input_dim matches the last dimension of x
             x = x.unsqueeze(-1)
 
-        return self.regressor(x)  # Access self.regressor here
+        return self.regressor(x=x)  # Access self.regressor here
 
     def training_step(self, batch, batch_idx):
         """Training step.

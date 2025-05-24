@@ -336,38 +336,46 @@ def create_nemo_callbacks(
     adapter_cfg = model_cfg.get("adapter", OmegaConf.create({"lora_rank": 0}))
     lora_rank = adapter_cfg.get("lora_rank", 0)
 
-    # Assume plot_interval is configured in cfg.trainer or a dedicated plotting section
-    # It's better to put plot_interval under custom_callbacks_config
+    # Assume plot_interval is configured under custom_callbacks_config
     plot_interval = cfg.get("custom_callbacks_config", {}).get(
         "plot_interval", 2
     )  # Default to plotting every 2 epochs
 
-    # --- Conditional Plotting Callbacks (only if LoRA is enabled) ---
+    # --- Always add PlottingCallback for current run's validation data ---
+    # Access validation_ds from cfg.model
+    finetune_validation_data_config = model_cfg.get("validation_ds", {})
+    if finetune_validation_data_config.get("file_path") and plot_interval > 0:
+        finetune_validation_data_path = finetune_validation_data_config.get(
+            "file_path"
+        )  # Use .get for safety
+        finetune_validation_batch_size = finetune_validation_data_config.get(
+            "batch_size", 32
+        )
+
+        callbacks.append(
+            PlottingCallback(
+                validation_data_path=finetune_validation_data_path,
+                validation_batch_size=finetune_validation_batch_size,
+                plot_interval=plot_interval,
+                # Don't pass base_model_eval_path to this callback anymore
+                # It's specifically for plotting the CURRENT run vs ACTUAL
+                # The comparison plot is handled by BaseDataComparisonPlottingCallback
+                # base_model_eval_path=base_model_eval_path, # Removed
+                plot_title_suffix=" (Current Validation Data)",  # Updated suffix
+            )
+        )
+        logging.info(f"Added PlottingCallback for current validation data.")
+    else:
+        logging.warning(
+            "Validation data not specified or plot_interval <= 0. Skipping PlottingCallback."
+        )
+
+    # --- Conditional Base Data Comparison Plotting Callback (only if LoRA is enabled) ---
     if lora_rank > 0:
-        logging.info(f"LoRA enabled (rank > 0). Adding plotting callbacks.")
-        # --- Plotting for Fine-tuned Validation Data ---\
-        # Access validation_ds from cfg.model
-        finetune_validation_data_config = model_cfg.get("validation_ds", {})
-        if finetune_validation_data_config.get("file_path") and plot_interval > 0:
-            finetune_validation_data_path = finetune_validation_data_config.get(
-                "file_path"
-            )  # Use .get for safety
-            finetune_validation_batch_size = finetune_validation_data_config.get(
-                "batch_size", 32
-            )
-
-            callbacks.append(
-                PlottingCallback(
-                    validation_data_path=finetune_validation_data_path,
-                    validation_batch_size=finetune_validation_batch_size,
-                    plot_interval=plot_interval,
-                    base_model_eval_path=base_model_eval_path,
-                    plot_title_suffix=" (Fine-tuned Validation Data)",
-                )
-            )
-
-        # --- Optional: Plotting for Base Validation Data at the End of Training ---\
-        # This config is now expected under custom_callbacks_config
+        logging.info(
+            f"LoRA enabled (rank > 0). Adding base data comparison plotting callback."
+        )
+        # This config is expected under custom_callbacks_config
         base_validation_ds_config_from_cfg = cfg.get("custom_callbacks_config", {}).get(
             "base_validation_ds", {}
         )
@@ -389,11 +397,19 @@ def create_nemo_callbacks(
                     base_validation_data_path=base_validation_data_path,
                     base_model_eval_path=base_model_eval_path,
                     base_validation_batch_size=base_validation_batch_size,
-                    plot_title_suffix=" (Base Validation Data)",
+                    plot_title_suffix=" (Base Validation Data Comparison)",  # Updated suffix
                 )
             )
+            logging.info(f"Added BaseDataComparisonPlottingCallback.")
+        else:
+            logging.warning(
+                f"Base model comparison plot skipped (LoRA enabled but base data or eval file missing)."
+            )
+
     else:
-        logging.info(f"LoRA disabled (rank is 0). Skipping plotting callbacks.")
+        logging.info(
+            f"LoRA disabled (rank is 0). Skipping base data comparison plotting callback."
+        )
 
     # Add TestingCallback if test data is available
     if test_data_path and Path(test_data_path).exists():
@@ -408,8 +424,13 @@ def create_nemo_callbacks(
                     test_interval=test_interval,
                 )
             )
+            logging.info(f"Added TestingCallback.")
+        else:
+            logging.info(
+                f"Test data path found but test_interval <= 0. Skipping TestingCallback."
+            )
 
-    # --- Add Frequency-Based Checkpoint Callback ---\
+    # --- Add Frequency-Based Checkpoint Callback ---
     if freq_checkpoint_params:
         # The checkpoint directory is a subdirectory of the log_dir set by exp_manager
         checkpoint_dir = os.path.join(
@@ -588,7 +609,7 @@ class PlottingCallback(Callback):
                 batch_x = torch.tensor(
                     self.x_val[i : i + self.validation_batch_size], dtype=torch.float32
                 ).to(device)
-                batch_preds = pl_module(batch_x).cpu().numpy()
+                batch_preds = pl_module(x=batch_x).cpu().numpy()
                 current_preds.append(batch_preds)
             current_preds = np.concatenate(current_preds, axis=0)
 
@@ -759,7 +780,7 @@ class BaseDataComparisonPlottingCallback(Callback):
                     self.x_base_val_plot[i : i + self.base_validation_batch_size],
                     dtype=torch.float32,
                 ).to(device)
-                batch_preds = pl_module(batch_x).cpu().numpy()
+                batch_preds = pl_module(x=batch_x).cpu().numpy()
                 current_preds_on_base_data.append(batch_preds)
             current_preds_on_base_data = np.concatenate(
                 current_preds_on_base_data, axis=0
@@ -890,7 +911,7 @@ class TestingCallback(Callback):
                 batch_x = torch.tensor(
                     self.x_test[i : i + self.test_batch_size], dtype=torch.float32
                 ).to(device)
-                batch_preds = pl_module(batch_x).cpu().numpy()
+                batch_preds = pl_module(x=batch_x).cpu().numpy()
                 test_preds.append(batch_preds)
         test_preds = np.concatenate(test_preds, axis=0)
 
