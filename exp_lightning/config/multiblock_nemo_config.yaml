@@ -123,26 +123,20 @@ exp_manager:
 
 # Custom callback configurations
 custom_callbacks_config:
+  # Add plot_interval
+  plot_interval: 2  # Plot every 2 epochs
+  
   # Configuration for the frequency checkpointing callback
   freq_checkpoint:
     save_interval: 1000 # Save checkpoint every this many training steps
-    # filename: '{epoch}-{step}-freq' # Filename pattern for frequency checkpoints
-    # The dirpath for freq checkpoints will be automatically determined
-    # relative to the main exp_manager checkpoint directory.
-    # It will create a subdirectory like 'freq_checkpoints'.
-
+    
   # Path to the pre-computed base model evaluation predictions (.npz file)
-  # This is used by the custom plotting callback.
   base_model_eval_path: data/base_model_eval_preds.npz
-
-  # Configuration for the base model validation dataset - used by callback for plotting
-  # This is a copy of the main 'base_validation_ds' in the model config,
-  # but kept here under custom_callbacks_config for clarity that it's for callbacks.
-  # The callback logic should use this config to load the data.
-  # This should ideally be resolved by Hydra based on the data/base structure.
+  
+  # Configuration for the base model validation dataset
   base_validation_ds:
     file_path: data/base/sine_val.npz
-    batch_size: 32 # Match model's data loader batch size or set as needed for callback
+    batch_size: 32
 
 
 # Other top-level parameters

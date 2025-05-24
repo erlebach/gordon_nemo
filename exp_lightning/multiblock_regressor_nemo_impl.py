@@ -206,6 +206,8 @@ class NeMoPredictionPlotter(Callback):
         """
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
 
+        print("CREATE PREDICTION PLOT")
+
         # Extract x values for plotting (handle multi-dimensional input)
         x_plot_for_2d = x_test[:, 0] if x_test.ndim > 1 else x_test
 
@@ -281,6 +283,7 @@ class NeMoPredictionPlotter(Callback):
             fig: The matplotlib figure to log.
             current_epoch: Current training epoch.
         """
+        print("CREATE LOG FIGURE PLOT")
         if trainer and trainer.logger:
             try:
                 # Log to TensorBoard if available
