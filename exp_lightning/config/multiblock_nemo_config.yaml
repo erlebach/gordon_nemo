@@ -1,0 +1,162 @@
+# @package _group_
+# This is the main configuration file for training the MultiBlock Regressor
+# with NeMo and Hydra.
+
+# Model configuration
+model:
+  # Target class for the NeMo model wrapper (MultiBlockRegressorNeMo)
+  _target_: exp_lightning.multiblock_regressor_nemo.MultiBlockRegressorNeMo
+
+  # Architecture configuration for the core MultiBlockRegressor module
+  # This section will be passed to self.from_config_dict in MultiBlockRegressorNeMo.__init__
+  arch:
+    # Target class for the core architecture module
+    _target_: exp_lightning.multiblock_regressor_nemo.MultiBlockRegressor
+    input_dim: 1          # Input feature dimension
+    hidden_dim: 64        # Hidden dimension for MLP layers
+    output_dim: 1         # Output feature dimension
+    num_blocks: 4         # Number of residual blocks
+    num_layers_per_block: 2 # Number of MLP layers within each block
+    activation: tanh      # Activation function (e.g., tanh, relu, gelu)
+    dropout: 0.1          # Dropout rate applied in MLP layers
+
+  # Adapter (LoRA) configuration (optional)
+  adapter:
+    lora_rank: 0          # Rank of the LoRA matrices (0 to disable)
+    lora_alpha: 32        # Scaling factor for LoRA output
+    lora_dropout: 0.0     # Dropout for LoRA path
+    gating_function: identity # Gating function for LoRA ('identity' or 'sigmoid')
+
+  # Optimizer configuration
+  optim:
+    name: adam            # Optimizer name (e.g., adam, sgd)
+    lr: 0.001             # Learning rate
+    weight_decay: 0.0     # Weight decay
+    # Optional scheduler configuration
+    # sched:
+    #   name: CosineAnnealing # Scheduler name (e.g., CosineAnnealing)
+    #   T_max: 100            # Max number of epochs for CosineAnnealing
+    #   min_lr: 0.0001        # Minimum learning rate for CosineAnnealing
+
+  # Dataset configurations
+  train_ds:
+    file_path: data/base/sine_train.npz # Path to training data file (.npz)
+    batch_size: 32
+    shuffle: True
+    num_workers: 0        # Number of data loading workers
+    pin_memory: False
+
+  validation_ds:
+    file_path: data/base/sine_val.npz   # Path to validation data file (.npz)
+    batch_size: 32
+    shuffle: False
+    num_workers: 0
+    pin_memory: False
+
+  test_ds:
+    file_path: data/base/sine_test.npz    # Path to test data file (.npz)
+    batch_size: 32
+    shuffle: False
+    num_workers: 0
+    pin_memory: False
+
+  # Configuration for the base validation data (used for plotting comparison)
+  # This is read by the model's _setup_dataloader_from_config but not used
+  # to create a dataloader within the model itself.
+  base_validation_ds:
+    file_path: data/base/sine_val.npz   # Path to base model validation data (.npz)
+    batch_size: 32 # This batch size might be overridden by the plotting callback
+    shuffle: False
+    num_workers: 0
+    pin_memory: False
+
+
+# Trainer configuration (PyTorch Lightning Trainer arguments)
+trainer:
+  devices: 1
+  accelerator: auto   # 'gpu' or 'cpu' or 'auto'
+  max_epochs: 100
+  max_steps: -1 # Override max_epochs if set to positive value
+  accumulate_grad_batches: 1
+  gradient_clip_val: 0.0
+  strategy: auto # 'ddp', 'fsdp', etc. for multi-GPU training
+  logger: false
+  enable_checkpointing: false
+  # Add other trainer args as needed
+
+# Experiment manager configuration
+# Experiment manager configuration
+exp_manager:
+  # Optional: Name and version are interpolated from the config for organization
+  name: ${name}
+  version: ${version}
+  create_checkpoint_callback: True # Automatically creates a ModelCheckpoint callback
+
+  # Frequency parameters belong here, directly under exp_manager
+  # These control how often the checkpoint callback saves checkpoints
+  # Use save_every_n_epochs or save_every_n_train_steps or every_n_train_steps
+  # save_every_n_epochs: 10 # Save checkpoint every n epochs
+  # save_on_train_epoch_end: False # This also belongs here if used
+
+  # Default ModelCheckpoint parameters (these can be overridden)
+  # These are parameters *of* the ModelCheckpoint callback itself,
+  # but *not* the frequency parameters which exp_manager handles separately.
+  checkpoint_callback_params:
+    monitor: val_loss       # Metric to monitor for saving best checkpoints
+    mode: min               # 'min' for loss, 'max' for accuracy/metric
+    save_top_k: 1           # Save the top k checkpoints
+    filename: '{epoch}-{val_loss:.2f}-{step}' # Checkpoint filename pattern including step
+    always_save_nemo: False # Save .nemo file along with .ckpt
+    dirpath: null # Defaults to exp_manager's base_dir / name / version / checkpoints
+    # save_interval, save_every_n_epochs, save_every_n_train_steps, every_n_train_steps
+    # DO NOT BELONG HERE.
+
+  # Optional: Other exp_manager settings
+  create_tensorboard_logger: True
+  create_wandb_logger: False
+  wandb_logger_kwargs:
+    name: ${name}_${version}
+    project: "multiblock_regressor"
+  # resume_if_exists: true # Set to true to resume from latest checkpoint if directory exists
+  # resume_from_checkpoint: null # Path to a specific checkpoint to resume from
+  # resume_ignore_no_checkpoint: false # If true, resume_from_checkpoint can be null and won't raise error
+
+# Custom callback configurations
+custom_callbacks_config:
+  # Configuration for the frequency checkpointing callback
+  freq_checkpoint:
+    save_interval: 1000 # Save checkpoint every this many training steps
+    # filename: '{epoch}-{step}-freq' # Filename pattern for frequency checkpoints
+    # The dirpath for freq checkpoints will be automatically determined
+    # relative to the main exp_manager checkpoint directory.
+    # It will create a subdirectory like 'freq_checkpoints'.
+
+  # Path to the pre-computed base model evaluation predictions (.npz file)
+  # This is used by the custom plotting callback.
+  base_model_eval_path: data/base_model_eval_preds.npz
+
+  # Configuration for the base model validation dataset - used by callback for plotting
+  # This is a copy of the main 'base_validation_ds' in the model config,
+  # but kept here under custom_callbacks_config for clarity that it's for callbacks.
+  # The callback logic should use this config to load the data.
+  # This should ideally be resolved by Hydra based on the data/base structure.
+  base_validation_ds:
+    file_path: data/base/sine_val.npz
+    batch_size: 32 # Match model's data loader batch size or set as needed for callback
+
+
+# Other top-level parameters
+name: MultiBlockRegressor # Experiment name
+version: '01' # Experiment version
+nemo_path: saved_model.nemo # Path to save the final .nemo model (optional)
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ./outputs/${name}/${version} # Output directory for runs
+  sweep:
+    dir: ./multirun/${name}/${version} # Output directory for sweeps
+    subdir: ${hydra.sweep.dir}/${hydra.job.num}
+  job:
+    # Add a minimal required parameter for hydra.job
+    chdir: true # Change to the output directory before running the job

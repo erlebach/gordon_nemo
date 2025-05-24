@@ -6,6 +6,10 @@ conventions and integrates with Hydra for configuration management.
 """
 
 import os
+
+# Add imports for manual loading
+# import tarfile # Removed as manual restore is removed
+# import tempfile # Removed as manual restore is removed
 import time
 from pathlib import Path
 from typing import Any
@@ -18,10 +22,11 @@ from exp_lightning.multiblock_regressor_nemo_impl import (
     create_nemo_callbacks,
     setup_nemo_logging,
 )
+from lightning.pytorch.callbacks import ModelCheckpoint
 from nemo.core import ModelPT, adapter_mixins
 from nemo.core.classes.common import typecheck
 from nemo.core.config import hydra_runner
-from nemo.core.neural_types import NeuralType, RegressionValuesType
+from nemo.core.neural_types import AxisType, NeuralType, RegressionValuesType
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from omegaconf import DictConfig, OmegaConf
@@ -103,7 +108,7 @@ class LoraLinear(nn.Module):
             if self.gating_layer:
                 nn.init.kaiming_uniform_(self.gating_layer.weight, a=5**0.5)
                 if self.gating_layer.bias is not None:
-                    nn.init.zeros_(self.gating_layer.bias)
+                    self.gating_layer.bias.requires_grad = True
 
             # Set trainability (LoRA weights and bias of base linear layer by default)
             # Gating layer weights are also trainable if gating is enabled
@@ -296,6 +301,9 @@ class ResidualMLP(nn.Module):
 class MultiBlockRegressor(nn.Module):
     """A multi-block regressor core architecture with optional LoRA support and gating.
 
+    This class is the core PyTorch module for the regressor architecture.
+    It is designed to be instantiated by MultiBlockRegressorNeMo using `from_config_dict`.
+
     Args:
         input_dim: Input dimension.
         hidden_dim: Hidden dimension for each block.
@@ -380,18 +388,33 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
     enabling it to work with Hydra configuration and NeMo's experiment management.
 
     Args:
-        cfg: Configuration object.
-        trainer: PyTorch Lightning trainer instance or None.
+        cfg: Configuration object. Expected to contain 'arch', 'optim', etc.
+             This 'cfg' corresponds to the content *inside* the 'model'
+             section of the main Hydra config.
+        trainer: PyTorch Lightning trainer instance.
 
     """
 
+    # Define input and output types as class attributes to ensure they exist early
+    # Use AxisType for the dimensions
+    _input_types: dict[str, NeuralType] = {
+        "x": NeuralType(
+            axes=(AxisType(kind="B"), AxisType(1)), elements_type=RegressionValuesType()
+        )
+    }
+    _output_types: dict[str, NeuralType] = {
+        "y": NeuralType(
+            axes=(AxisType(kind="B"), AxisType(1)), elements_type=RegressionValuesType()
+        )
+    }
+
     def __init__(self, cfg: DictConfig, trainer: pl.Trainer | None = None):
-        # Pass trainer to superclass only if it's not None
+        # Pass the full cfg (content of model section) and trainer to the parent class
         super().__init__(cfg=cfg, trainer=trainer)
 
-        # Extract configuration sections
-        arch_cfg = cfg.arch
-        adapter_cfg = cfg.get(
+        # Extract configuration sections using .get for robustness
+        arch_cfg = self.cfg.get("arch")
+        adapter_cfg = self.cfg.get(
             "adapter",
             OmegaConf.create(
                 {
@@ -403,20 +426,11 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             ),
         )
 
-        # Create the core regressor model
-        self.regressor = MultiBlockRegressor(
-            input_dim=arch_cfg.input_dim,
-            hidden_dim=arch_cfg.hidden_dim,
-            output_dim=arch_cfg.output_dim,
-            num_blocks=arch_cfg.num_blocks,
-            num_layers_per_block=arch_cfg.num_layers_per_block,
-            activation=arch_cfg.activation,
-            dropout=arch_cfg.dropout,
-            lora_rank=adapter_cfg.lora_rank,
-            lora_alpha=adapter_cfg.lora_alpha,
-            lora_dropout=adapter_cfg.lora_dropout,
-            gating_function=adapter_cfg.gating_function,
-        )
+        if arch_cfg is None:
+            raise ValueError("Model configuration must contain an 'arch' section.")
+
+        # Create the core regressor model using from_config_dict
+        self.regressor = self.from_config_dict(config=arch_cfg)
 
         # Loss function
         self.criterion = nn.MSELoss()
@@ -424,8 +438,20 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         # Setup adapters if needed
         self.setup_adapters()
 
-        # Setup data loaders
-        self._setup_dataloader_from_config(cfg)
+        # Data loader setup is in setup()
+
+    def setup(self, stage: str | None = None):
+        """
+        Hook called after model has been initialized and transferred to device.
+        Used to setup data loaders.
+
+        Args:
+            stage: 'fit', 'validate', 'test', 'predict'
+        """
+        super().setup(stage)  # Call parent setup
+
+        # Setup data loaders here, now that the model and self.regressor are initialized
+        self._setup_dataloader_from_config(self.cfg)
 
     @property
     def input_types(self) -> dict[str, NeuralType]:
@@ -434,7 +460,8 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         Returns:
             Dictionary mapping input names to neural types.
         """
-        return {"x": NeuralType(("B", "T"), RegressionValuesType())}
+        # Return the class attribute
+        return self._input_types
 
     @property
     def output_types(self) -> dict[str, NeuralType]:
@@ -443,19 +470,31 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         Returns:
             Dictionary mapping output names to neural types.
         """
-        return {"y": NeuralType(("B", "T"), RegressionValuesType())}
+        # Return the class attribute
+        return self._output_types
 
     @typecheck()
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass using the regressor.
 
         Args:
-            x: Input tensor.
+            x: Input tensor. Expected shape (Batch, input_dim).
 
         Returns:
-            Output tensor.
+            Output tensor. Expected shape (Batch, output_dim).
         """
-        return self.regressor(x)
+        # Ensure input tensor has correct shape for the regressor
+        # If input_dim is 1, ensure shape is (Batch, 1)
+        # self.regressor should now be initialized by the time forward is called
+        if hasattr(self, "regressor") and self.regressor.input_dim == 1 and x.ndim == 1:
+            x = x.unsqueeze(-1)
+        elif (
+            x.ndim == 1
+        ):  # Handle case before regressor is fully initialized or if input_dim is not 1
+            # Assume input_dim matches the last dimension of x
+            x = x.unsqueeze(-1)
+
+        return self.regressor(x)  # Access self.regressor here
 
     def training_step(self, batch, batch_idx):
         """Training step.
@@ -513,7 +552,10 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             Optimizer or dictionary with optimizer and scheduler.
 
         """
-        optim_cfg = self.cfg.optim
+        # Access optim config from self.cfg
+        optim_cfg = self.cfg.get("optim")
+        if optim_cfg is None:
+            raise ValueError("Model configuration must contain an 'optim' section.")
 
         # Determine if LoRA is enabled
         lora_enabled = (
@@ -529,15 +571,22 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             # Unfreeze LoRA parameters and biases
             trainable_params = []
             for name, param in self.named_parameters():
-                if (
+                # Check if the parameter belongs to the regressor module and matches LoRA/bias criteria
+                if name.startswith("regressor.") and (
                     "lora_a" in name
                     or "lora_b" in name
                     or ("linear.bias" in name and param.requires_grad)
+                    or (
+                        "gating_layer" in name and param.requires_grad
+                    )  # Include gating layer params if trainable
                 ):
                     param.requires_grad = True
                     trainable_params.append(param)
 
             logging.info(f"Number of trainable parameters: {len(trainable_params)}")
+            if not trainable_params:
+                logging.warning("No trainable parameters found for LoRA + Bias!")
+
         else:
             logging.info("LoRA is disabled. Training all model parameters.")
             trainable_params = self.parameters()
@@ -573,15 +622,32 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         """Set up data loaders from configuration.
 
         Args:
-            cfg: Configuration object.
+            cfg: Configuration object. Expected to contain 'train_ds', 'validation_ds',
+                 and 'test_ds' sections at the top level of this model's cfg.
 
         """
+        # Check if the stage is appropriate for setting up data loaders
+        # 'fit' stage needs train and val, 'validate' needs val, 'test' needs test
+        # However, calling setup for all stages here is generally safe and common
+        # if the dataloader properties (_train_dl, etc.) are checked in train_dataloader etc.
+
         if hasattr(cfg, "train_ds"):
+            logging.info("Setting up training data...")
             self.setup_training_data(cfg.train_ds)
         if hasattr(cfg, "validation_ds"):
+            logging.info("Setting up validation data...")
             self.setup_validation_data(cfg.validation_ds)
         if hasattr(cfg, "test_ds"):
+            logging.info("Setting up test data...")
             self.setup_test_data(cfg.test_ds)
+
+        # Also check for base_validation_ds if it exists in the config
+        # This is needed for the custom plotting callback
+        if hasattr(cfg, "base_validation_ds"):
+            logging.info("Storing base validation data config for callbacks...")
+            # Store this config, don't set up a dataloader here,
+            # the callback will handle its dataloader creation.
+            self.base_validation_ds_config = cfg.base_validation_ds
 
     def setup_training_data(self, train_data_config: DictConfig | dict):
         """Set up training data loader.
@@ -590,6 +656,10 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             train_data_config: Configuration for training data.
 
         """
+        # Ensure data_config is DictConfig for OmegaConf methods
+        if not isinstance(train_data_config, DictConfig):
+            train_data_config = OmegaConf.create(train_data_config)
+
         self._train_dl = self._get_dataloader_from_config(
             train_data_config, shuffle=True
         )
@@ -601,6 +671,10 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             val_data_config: Configuration for validation data.
 
         """
+        # Ensure data_config is DictConfig for OmegaConf methods
+        if not isinstance(val_data_config, DictConfig):
+            val_data_config = OmegaConf.create(val_data_config)
+
         self._validation_dl: DataLoader | None = self._get_dataloader_from_config(
             val_data_config, shuffle=False
         )
@@ -612,6 +686,10 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             test_data_config: Configuration for test data.
 
         """
+        # Ensure data_config is DictConfig for OmegaConf methods
+        if not isinstance(test_data_config, DictConfig):
+            test_data_config = OmegaConf.create(test_data_config)
+
         self._test_dl: DataLoader | None = self._get_dataloader_from_config(
             test_data_config, shuffle=False
         )
@@ -629,6 +707,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             DataLoader instance or None if creation fails.
         """
         try:
+            # Accessing parameters directly from the provided config section
             file_path = config.file_path
             batch_size = config.batch_size
             num_workers = config.get("num_workers", 0)
@@ -640,6 +719,13 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
             data = np.load(file_path)
             x = data["x"]
             y = data["y"]
+
+            # Ensure tensors have shape (N, 1) if input_dim or output_dim is 1
+            # Now self.regressor should be available
+            if self.regressor.input_dim == 1 and x.ndim == 1:
+                x = x[:, None]
+            if self.regressor.output_dim == 1 and y.ndim == 1:
+                y = y[:, None]
 
             dataset = TensorDataset(
                 torch.tensor(x, dtype=torch.float32),
@@ -680,6 +766,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         Returns:
             List of available model names.
         """
+        # No pretrained models available for this custom regressor
         return []
 
     # Adapter mixin methods
@@ -725,9 +812,13 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         Returns:
             List of module names that support adapters.
         """
-        module_names = [""]
+        # Need to prefix with the name of the regressor module
+        module_names = []
         for i in range(self.regressor.num_blocks):
-            module_names.append(f"block_{i}")
+            module_names.append(f"regressor.block_{i}")
+        # Also include the output projection if it's a Linear layer
+        if isinstance(self.regressor.output_proj, nn.Linear):
+            module_names.append("regressor.output_proj")
         return module_names
 
     @property
@@ -737,11 +828,26 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         Returns:
             Name of the default adapter module.
         """
-        return "block_0"
+        # Default to the first block
+        if self.regressor.num_blocks > 0:
+            return "regressor.block_0"
+        # If no blocks, default to output_proj if it's a linear layer
+        elif isinstance(self.regressor.output_proj, nn.Linear):
+            return "regressor.output_proj"
+        # Otherwise, no modules support adapters
+        return ""
 
     def check_valid_model_with_adapter_support_(self):
         """Check if the model supports adapters."""
-        pass
+        # Perform checks specific to this model's structure
+        # For example, check if regressor contains LoraLinear layers
+        for name, module in self.named_modules():
+            if isinstance(module, LoraLinear):
+                logging.info(
+                    f"Found LoraLinear module: {name}. Adapter support is valid."
+                )
+                return  # Found at least one, so support is valid.
+        logging.warning("No LoraLinear modules found. Adapter support may be limited.")
 
 
 @hydra_runner(config_path="config", config_name="multiblock_nemo_config")
@@ -756,45 +862,96 @@ def main(cfg: DictConfig) -> None:
     setup_nemo_logging()
     logging.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
-    # Check if data files exist
+    # Check if data files exist (checking train data is sufficient for basic check)
+    # Access train_ds config from cfg.model
     train_data_path = cfg.model.train_ds.file_path
     if not Path(train_data_path).exists():
         logging.error(f"Training data not found at {train_data_path}")
         logging.info("Please ensure data files are generated before training.")
         return
 
+    # --- Retrieve custom callback configurations ---
+    # custom_callbacks_config is now at the top level of the full cfg
+    custom_callbacks_config = cfg.get("custom_callbacks_config", None)
+
     # Create trainer
-    # Trainer configuration comes from cfg.trainer
     trainer = pl.Trainer(**cfg.trainer)
 
-    # Setup experiment manager
-    exp_manager(trainer, cfg.get("exp_manager", None))
+    # --- Resolve interpolations in exp_manager section before calling exp_manager ---
+    # The exp_manager config might contain interpolations that reference other parts of the config (e.g., in 'name' or 'version')
+    # To resolve these, we need to pass the *full* config as context.
+    # We can convert the exp_manager config to a container with resolution,
+    # or resolve the full config and extract the exp_manager part.
+    # Let's use a simpler approach: resolve the full config first, then extract the exp_manager part.
 
-    # Manually add ModelCheckpoint if needed (since we disabled automatic creation in config)
-    from lightning.pytorch.callbacks import ModelCheckpoint
+    # Resolve interpolations in the entire config object
+    # This resolves ALL interpolations using the full cfg as context
+    resolved_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
 
-    checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss",
-        mode="min",
-        save_top_k=3,
-        filename="{epoch}-{val_loss:.3f}",
-        save_last=True,
-    )
-    # Access callbacks attribute directly - seems the linter might be overly cautious here or expects a specific Trainer subclass
-    trainer.callbacks.append(checkpoint_callback)
+    # Extract the now fully resolved exp_manager section
+    # Check if 'exp_manager' key exists after resolution
+    resolved_exp_manager_cfg = resolved_cfg.get("exp_manager", None)
+
+    # -----------------------------------------------------------------------
+
+    # Setup experiment manager with only the resolved exp_manager section
+    # This must run BEFORE create_nemo_callbacks to set up the logger and its log_dir
+    if resolved_exp_manager_cfg is not None:
+        exp_manager(trainer, resolved_exp_manager_cfg)
+    else:
+        logging.warning(
+            "No 'exp_manager' section found in resolved config. Skipping experiment manager setup."
+        )
 
     # Create model
+    # Pass the model config section (cfg.model) to the model's __init__
     model = MultiBlockRegressorNeMo(cfg=cfg.model, trainer=trainer)
 
-    # Create custom callbacks
+    # Create custom callbacks (excluding ModelCheckpoint which exp_manager handles automatically based on its config)
+    # Pass the log_dir from trainer.logger
+    # Access test_ds config from cfg.model
     test_data_path = cfg.model.get("test_ds", {}).get("file_path")
-    # Pass the full DictConfig to create_nemo_callbacks
-    custom_callbacks = create_nemo_callbacks(cfg, test_data_path)
+
+    # Check if trainer.logger and trainer.logger.log_dir are available
+    log_dir = None
+    # trainer.logger is set by exp_manager, so check if exp_manager ran and set logger
+    if trainer.logger and hasattr(trainer.logger, "log_dir"):
+        log_dir = trainer.logger.log_dir
+    elif cfg.get("exp_manager", {}).get("create_tensorboard_logger", False):
+        # If exp_manager was configured to create a logger but log_dir is not set, something is wrong
+        logging.error(
+            "Exp manager was configured to create logger, but log_dir is not available on trainer.logger."
+        )
+        # Proceeding with log_dir = None, freq checkpoints will likely be skipped
+
+    # Get the frequency checkpointing config - now at the top level under custom_callbacks_config
+    freq_checkpoint_params = cfg.get("custom_callbacks_config", {}).get(
+        "freq_checkpoint", None
+    )
+
+    # Pass base_validation_ds_config - now at the top level under custom_callbacks_config
+    # Also ensure we pass the *full* cfg (or relevant parts) to create_nemo_callbacks
+    # The callback logic might need access to various parts of the config, e.g., data paths
+    base_model_eval_path = cfg.get("custom_callbacks_config", {}).get(
+        "base_model_eval_path", None
+    )
+    base_validation_ds_config = cfg.get("custom_callbacks_config", {}).get(
+        "base_validation_ds", None
+    )
+
+    custom_callbacks = create_nemo_callbacks(
+        cfg,  # Pass full config (can be useful for callbacks accessing other parts)
+        log_dir,  # Pass the log_dir (can be None)
+        test_data_path,
+        base_model_eval_path=base_model_eval_path,  # Passed from custom_callbacks_config
+        base_validation_ds_config=base_validation_ds_config,  # Passed from custom_callbacks_config
+        freq_checkpoint_params=freq_checkpoint_params,  # Passed from custom_callbacks_config (can be None)
+    )
 
     # Add custom callbacks to trainer
-    for callback in custom_callbacks:
-        # Access callbacks attribute directly
-        trainer.callbacks.append(callback)
+    if custom_callbacks:
+        for callback in custom_callbacks:
+            trainer.callbacks.append(callback)
 
     # Training
     logging.info("Starting training...")
@@ -804,14 +961,19 @@ def main(cfg: DictConfig) -> None:
     logging.info(f"Training completed in {end_time - start_time:.2f} seconds")
 
     # Testing
-    if test_data_path and os.path.exists(test_data_path):
+    if test_data_path and Path(test_data_path).exists():
         logging.info("Running testing...")
+        # Pass the model instance to trainer.test
         trainer.test(model)
+    else:
+        logging.warning("Test data path not found. Skipping testing.")
 
     # Save the model if specified
-    if hasattr(cfg, "nemo_path") and cfg.nemo_path is not None:
-        model.save_to(cfg.nemo_path)
-        logging.info(f"Model saved to {cfg.nemo_path}")
+    # nemo_save_path is at the top level of the full cfg
+    nemo_save_path = cfg.get("nemo_path", None)
+    if nemo_save_path is not None:
+        model.save_to(nemo_save_path)
+        logging.info(f"Model saved to {nemo_save_path}")
 
 
 if __name__ == "__main__":
