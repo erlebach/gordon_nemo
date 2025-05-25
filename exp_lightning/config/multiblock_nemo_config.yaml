@@ -24,7 +24,7 @@ model:
   adapter:
     lora_rank: 0          # Rank of the LoRA matrices (0 to disable)
     lora_alpha: 32        # Scaling factor for LoRA output
-    lora_dropout: 0.0     # Dropout for LoRA path
+    lora_dropout: 0.05    # Dropout for LoRA path
     gating_function: identity # Gating function for LoRA ('identity' or 'sigmoid')
 
   # Optimizer configuration
@@ -75,7 +75,7 @@ model:
 trainer:
   devices: 1
   accelerator: auto   # 'gpu' or 'cpu' or 'auto'
-  max_epochs: 100
+  max_epochs: 50
   max_steps: -1 # Override max_epochs if set to positive value
   accumulate_grad_batches: 1
   gradient_clip_val: 0.0
@@ -123,12 +123,11 @@ exp_manager:
 
 # Custom callback configurations
 custom_callbacks_config:
-  # Add plot_interval
-  plot_interval: 2  # Plot every 2 epochs
+  plot_interval: 2  # Add this line
   
   # Configuration for the frequency checkpointing callback
   freq_checkpoint:
-    save_interval: 1000 # Save checkpoint every this many training steps
+    save_interval: 1000
     
   # Path to the pre-computed base model evaluation predictions (.npz file)
   base_model_eval_path: data/base_model_eval_preds.npz
@@ -147,10 +146,7 @@ nemo_path: saved_model.nemo # Path to save the final .nemo model (optional)
 # Hydra configuration
 hydra:
   run:
-    dir: ./outputs/${name}/${version} # Output directory for runs
-  sweep:
-    dir: ./multirun/${name}/${version} # Output directory for sweeps
-    subdir: ${hydra.sweep.dir}/${hydra.job.num}
-  job:
-    # Add a minimal required parameter for hydra.job
-    chdir: true # Change to the output directory before running the job
+    dir: .
+  job_logging:
+    root:
+      handlers: null

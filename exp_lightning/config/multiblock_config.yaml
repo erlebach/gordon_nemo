@@ -28,18 +28,24 @@ data:
   train_ds:
     file_path: "data/base/sine_train.npz"
     batch_size: 32
+    shuffle: True
     num_workers: 0
     pin_memory: false
-    
+
   validation_ds:
-    file_path: "data/base/sine_val.npz"
+    file_path: data/base/sine_val.npz
     batch_size: 32
+    shuffle: False
     num_workers: 0
     pin_memory: false
     
   test_ds:
-    file_path: "data/base/sine_test.npz"
+    file_path: data/base/sine_test.npz
     batch_size: 32
+    shuffle: False
+    num_workers: 0
+    pin_memory: False
+
     num_workers: 0
     pin_memory: false
 

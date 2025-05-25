@@ -334,37 +334,39 @@ def create_nemo_callbacks(
     callbacks = []
 
     # Check if LoRA is enabled based on lora_rank in the model config
-    # Access lora_rank from cfg.model.adapter, providing defaults for safety
     model_cfg = cfg.get("model", OmegaConf.create({}))
     adapter_cfg = model_cfg.get("adapter", OmegaConf.create({"lora_rank": 0}))
     lora_rank = adapter_cfg.get("lora_rank", 0)
 
-    # Assume plot_interval is configured under custom_callbacks_config
-    plot_interval = cfg.get("custom_callbacks_config", {}).get(
-        "plot_interval", 2
-    )  # Default to plotting every 2 epochs
+    # Get plot interval
+    plot_interval = cfg.get("custom_callbacks_config", {}).get("plot_interval", 2)
 
     # --- Always add PlottingCallback for current run's validation data ---
-    # Access validation_ds from cfg.model
     finetune_validation_data_config = model_cfg.get("validation_ds", {})
     if finetune_validation_data_config.get("file_path") and plot_interval > 0:
-        finetune_validation_data_path = finetune_validation_data_config.get(
-            "file_path"
-        )  # Use .get for safety
+        finetune_validation_data_path = finetune_validation_data_config.get("file_path")
         finetune_validation_batch_size = finetune_validation_data_config.get(
             "batch_size", 32
         )
+
+        # Determine labels and base model eval path based on LoRA status
+        if lora_rank > 0:
+            # Fine-tuning mode: show comparison with base model
+            plot_title_suffix = " (Current Validation Data)"
+            use_base_model_eval = base_model_eval_path
+        else:
+            # Base model training mode: just show predicted vs actual
+            plot_title_suffix = " (Base Model Training)"
+            use_base_model_eval = None  # Don't load base model predictions
 
         callbacks.append(
             PlottingCallback(
                 validation_data_path=finetune_validation_data_path,
                 validation_batch_size=finetune_validation_batch_size,
                 plot_interval=plot_interval,
-                # Don't pass base_model_eval_path to this callback anymore
-                # It's specifically for plotting the CURRENT run vs ACTUAL
-                # The comparison plot is handled by BaseDataComparisonPlottingCallback
-                # base_model_eval_path=base_model_eval_path, # Removed
-                plot_title_suffix=" (Current Validation Data)",  # Updated suffix
+                base_model_eval_path=use_base_model_eval,
+                plot_title_suffix=plot_title_suffix,
+                is_lora_enabled=lora_rank > 0,  # Add this parameter
             )
         )
         logging.info(f"Added PlottingCallback for current validation data.")
@@ -490,11 +492,7 @@ def create_nemo_callbacks(
 
 
 class PlottingCallback(Callback):
-    """Callback for plotting predictions vs actuals during validation (typically on fine-tuned data).
-
-    Plots the predicted values from the current model against the actual values for the validation dataset.
-    Includes the base model's pre-computed predictions if base_model_eval_path is provided.
-    """
+    """Callback for plotting predictions vs actuals during validation."""
 
     def __init__(
         self,
@@ -503,6 +501,7 @@ class PlottingCallback(Callback):
         plot_interval: int = 2,
         base_model_eval_path: str | None = None,
         plot_title_suffix: str = "",
+        is_lora_enabled: bool = False,  # Add this parameter
     ):
         """Initialize the plotting callback.
 
@@ -512,6 +511,7 @@ class PlottingCallback(Callback):
             plot_interval: Interval (in epochs) for generating plots.
             base_model_eval_path: Path to the base model evaluation data file.
             plot_title_suffix: Suffix to add to plot title.
+            is_lora_enabled: Whether LoRA fine-tuning is enabled.
         """
         super().__init__()
         self.validation_data_path = validation_data_path
@@ -519,6 +519,7 @@ class PlottingCallback(Callback):
         self.plot_interval = plot_interval
         self.base_model_eval_path = base_model_eval_path
         self.plot_title_suffix = plot_title_suffix
+        self.is_lora_enabled = is_lora_enabled
 
         # Load validation data (actuals and features)
         try:
@@ -540,19 +541,21 @@ class PlottingCallback(Callback):
             )
             self.x_val, self.y_val = None, None
 
-        # Load pre-computed base model predictions if path is provided
+        # Load pre-computed base model predictions only if LoRA is enabled
         self.base_preds_for_this_data = None
-        if self.base_model_eval_path and Path(self.base_model_eval_path).exists():
+        if (
+            self.is_lora_enabled
+            and self.base_model_eval_path
+            and Path(self.base_model_eval_path).exists()
+        ):
             try:
                 eval_data = np.load(self.base_model_eval_path)
-                # Assume the keys correspond to the data being plotted by *this* callback
-                # This callback plots fine-tune validation data, so look for finetune_val_preds_base_model
                 if "finetune_val_preds_base_model" in eval_data:
                     self.base_preds_for_this_data = eval_data[
                         "finetune_val_preds_base_model"
                     ]
                     logging.info(
-                        f"Loaded base model predictions for fine-tune validation data from {self.base_model_eval_path}: shape {self.base_preds_for_this_data.shape}"
+                        f"Loaded base model predictions for comparison from {self.base_model_eval_path}: shape {self.base_preds_for_this_data.shape}"
                     )
                     # Basic shape check
                     if (
@@ -565,22 +568,12 @@ class PlottingCallback(Callback):
                         )
                 else:
                     logging.warning(
-                        f"Key 'finetune_val_preds_base_model' not found in {self.base_model_eval_path}. Base curve will not be plotted for fine-tune data."
+                        f"Key 'finetune_val_preds_base_model' not found in {self.base_model_eval_path}. Base curve will not be plotted."
                     )
-                    self.base_model_eval_path = (
-                        None  # Disable base plotting if key not found
-                    )
-
             except Exception as e:
                 logging.error(
                     f"Error loading base model eval data from {self.base_model_eval_path}: {e}"
                 )
-                self.base_model_eval_path = None  # Disable base plotting on error
-        elif self.base_model_eval_path:
-            logging.warning(
-                f"Base model evaluation file not found at {self.base_model_eval_path}. Base curve will not be plotted for fine-tune data."
-            )
-            self.base_model_eval_path = None  # Disable base plotting if file not found
 
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
@@ -599,14 +592,13 @@ class PlottingCallback(Callback):
 
         logging.info(
             f"Plotting predictions vs actuals for epoch {trainer.current_epoch + 1}"
-            f"{self.plot_title_suffix}"  # Add suffix
+            f"{self.plot_title_suffix}"
         )
 
-        # Get predictions from the current (fine-tuned) model
-        pl_module.eval()  # Set module to evaluation mode
-        with torch.no_grad():  # Disable gradient calculation
+        # Get predictions from the current model
+        pl_module.eval()
+        with torch.no_grad():
             current_preds = []
-            # Ensure data is on the correct device for the current model
             device = pl_module.device
             for i in range(0, len(self.x_val), self.validation_batch_size):
                 batch_x = torch.tensor(
@@ -616,24 +608,28 @@ class PlottingCallback(Callback):
                 current_preds.append(batch_preds)
             current_preds = np.concatenate(current_preds, axis=0)
 
-        pl_module.train()  # Set module back to training mode
+        pl_module.train()
 
         # Plotting
         try:
-            # Use a clear figure name
             plt.figure(
                 f"Validation Plot Epoch {trainer.current_epoch + 1}{self.plot_title_suffix}",
                 figsize=(10, 6),
             )
-            plt.scatter(
-                self.x_val, self.y_val, label="Actual", alpha=0.5
-            )  # Plot actual data
 
-            # Plot fine-tuned model predictions
-            plt.scatter(self.x_val, current_preds, label="Fine-tuned Preds", alpha=0.5)
+            # Plot actual data
+            plt.scatter(self.x_val, self.y_val, label="Actual", alpha=0.5)
 
-            # Plot base model predictions if available for this dataset
-            if self.base_preds_for_this_data is not None:
+            # Plot model predictions with appropriate label
+            if self.is_lora_enabled:
+                pred_label = "Fine-tuned Preds"
+            else:
+                pred_label = "Predicted"
+
+            plt.scatter(self.x_val, current_preds, label=pred_label, alpha=0.5)
+
+            # Plot base model predictions only if LoRA is enabled and base preds are available
+            if self.is_lora_enabled and self.base_preds_for_this_data is not None:
                 plt.scatter(
                     self.x_val,
                     self.base_preds_for_this_data,
@@ -655,16 +651,15 @@ class PlottingCallback(Callback):
                 fig.canvas.draw()
                 plot_image = np.array(fig.canvas.renderer._renderer).transpose(2, 0, 1)[
                     :3
-                ]  # Convert to C x H x W
+                ]
 
-                # Use a distinct tag for this plot
                 trainer.logger.experiment.add_image(
                     f"Validation Predictions Plot{self.plot_title_suffix}",
                     plot_image,
                     trainer.global_step,
                 )
 
-            plt.close(fig)  # Close the specific figure to free memory
+            plt.close(fig)
 
         except Exception as e:
             logging.error(

@@ -29,3 +29,12 @@ TODO:
     The adapter is zero if `lora_rank=0` in the configuration file.
   - the configuraiton file `config/multiblock_config.yaml` now has 
     an adapter at the top level (outside within the `model` key). 
+
+# 2025-05-24, 20:38 pm
+1. lora_rank = 0: run with base_data. Base model saved to `final_base_model.nemo`
+   Configuration file: config/multiblock_nemo_config.yaml
+2. lora_rank = 8: run with fine-tuned data (sine wave phase-shifted)
+```bash
+python -m exp_lighting.multiblock_regressor_nemo --config-name=multiblock_nemo_finetune_config.yaml
+```
+  When fine-tuning, also read the output of the base run. 

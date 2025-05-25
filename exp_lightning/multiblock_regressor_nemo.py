@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import hydra.utils
 import lightning.pytorch as pl
 import numpy as np
 import torch
@@ -408,7 +409,34 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         )
     }
 
-    def __init__(self, cfg: DictConfig, trainer: pl.Trainer | None = None):
+    def __init__(
+        self, cfg: DictConfig = None, trainer: pl.Trainer | None = None, **kwargs
+    ):
+        """Initialize the MultiBlockRegressorNeMo model."""
+
+        # Handle different config formats
+        if cfg is None and kwargs:
+            cfg = OmegaConf.create(kwargs)
+        elif cfg is None:
+            raise ValueError("Configuration required")
+
+        # Check if we got the arch section directly (restoration issue)
+        if "arch" not in cfg and "input_dim" in cfg:
+            # We received just the arch contents, need to wrap it properly
+            arch_cfg = cfg
+            cfg = OmegaConf.create(
+                {
+                    "arch": arch_cfg,
+                    "adapter": {
+                        "lora_rank": 0,
+                        "lora_alpha": 32,
+                        "lora_dropout": 0.0,
+                        "gating_function": "identity",
+                    },
+                    "optim": {"name": "adam", "lr": 0.001, "weight_decay": 0.0},
+                }
+            )
+
         # Pass the full cfg (content of model section) and trainer to the parent class
         super().__init__(cfg=cfg, trainer=trainer)
 
@@ -429,8 +457,18 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         if arch_cfg is None:
             raise ValueError("Model configuration must contain an 'arch' section.")
 
-        # Create the core regressor model using from_config_dict
-        self.regressor = self.from_config_dict(config=arch_cfg)
+        # Create the core regressor model using from_config_dict using _target_
+        print(f"\n\n==> ARCH_CFG: {arch_cfg}\n\n")
+
+        # Add _target_ if missing and use hydra.utils.instantiate directly
+        if "_target_" not in arch_cfg:
+            arch_cfg = OmegaConf.create(dict(arch_cfg))  # Make mutable copy
+            arch_cfg["_target_"] = (
+                "exp_lightning.multiblock_regressor_nemo.MultiBlockRegressor"
+            )
+
+        # Use hydra directly instead of self.from_config_dict to avoid recursion
+        self.regressor = hydra.utils.instantiate(config=arch_cfg)
 
         # Loss function
         self.criterion = nn.MSELoss()
@@ -441,12 +479,14 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         # Data loader setup is in setup()
 
     def setup(self, stage: str | None = None):
-        """
+        """Call seup after model has been initialized and transferred to device.
+
         Hook called after model has been initialized and transferred to device.
         Used to setup data loaders.
 
         Args:
             stage: 'fit', 'validate', 'test', 'predict'
+
         """
         super().setup(stage)  # Call parent setup
 
