@@ -85,7 +85,7 @@ trainer:
   # Add other trainer args as needed
 
 # Experiment manager configuration
-# Experiment manager configuration
+# There is an associated schema. Additional keys are not allowed. 
 exp_manager:
   # Optional: Name and version are interpolated from the config for organization
   name: ${name}

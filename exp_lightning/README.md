@@ -38,3 +38,13 @@ TODO:
 python -m exp_lighting.multiblock_regressor_nemo --config-name=multiblock_nemo_finetune_config.yaml
 ```
   When fine-tuning, also read the output of the base run. 
+
+# 2025-05-24, 23:57
+TODO: 
+- Run validations on the checkpointed files, stored under tensorflow. 
+  Currently, no checkpointed files are stored (only the final files). 
+- Analyze the schemas for the configuration file `exp_manager,` etc. I'd like to understand structure. 
+  Look at examples under NeMo/examples github repository. 
+- Understand: `="data/base_model_eval_preds.npz"`
+  `save_every_n_epochs,` `save_every_n_train_steps,` `every_n_train_steps`
+  (where in the file to place)
