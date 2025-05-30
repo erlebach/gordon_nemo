@@ -1,2 +1,7 @@
 # SpecStory explanation file
 .specstory/.what-is-this.md
+
+__pycache__/
+*.py[cod]
+.env
+.DS_Store
