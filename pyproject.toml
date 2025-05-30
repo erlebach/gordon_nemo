@@ -55,8 +55,10 @@ dependencies = [
     "webdataset>=0.2.111",
     "wget>=3.2",
     "wrapt>=1.17.2",
+    "nemo-run>=0.4.0",
+    "python-dotenv>=1.1.0",
 ]
 
 [tool.setuptools]
-packages=["multiblock_regression", "model_pt_test", "exp_lightning"]
+packages=["multiblock_regression", "model_pt_test", "exp_lightning", "hello-world", "finetune"]
 package-dir={"" = "."}

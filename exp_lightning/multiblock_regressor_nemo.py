@@ -890,6 +890,7 @@ class MultiBlockRegressorNeMo(ModelPT, adapter_mixins.AdapterModelPTMixin):
         logging.warning("No LoraLinear modules found. Adapter support may be limited.")
 
 
+# ----------------------------------------------------------------------
 @hydra_runner(config_path="config", config_name="multiblock_nemo_config")
 def main(cfg: DictConfig) -> None:
     """Execute training function using Hydra configuration.
@@ -1016,5 +1017,6 @@ def main(cfg: DictConfig) -> None:
         logging.info(f"Model saved to {nemo_save_path}")
 
 
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
     main()
