@@ -2,13 +2,14 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --output=%x_%j.out
-#SBATCH -J "dummy_recipe_mwe_gpu_8"
+# ##SBATCH -J "dummy_recipe_mwe_gpu_8_`date +%Y-%m-%d_%H-%M-%S`"
 #SBATCH -t 00:30:00
 #SBATCH -A pilotgpu
 #SBATCH --gres=gpu:1
 #SBATCH --mem=48GB
 
 echo "===== Job started at $(date) ====="
+echo "JOB NAME: $JOB_NAME"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Job name: $SLURM_JOB_NAME"
 echo "Running on node(s): $SLURM_NODELIST"
@@ -35,7 +36,7 @@ GPU_LOGGER_PID=$!
 
 # Run your script with resource timing
 echo "----- Running Python job -----"
-/usr/bin/time -v python dummy_recipe_mwe_gpu_8.py
+/usr/bin/time -v python ${JOB_NAME}.py
 
 # Kill the GPU monitoring loop
 kill $GPU_LOGGER_PID
