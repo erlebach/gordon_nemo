@@ -9,6 +9,9 @@ JOB_NAME="mwe_training_pipeline"
 #SBATCH --gres=gpu:1
 #SBATCH --mem=48GB
 
+# Get the Python script base name from argument
+PYTHON_BASE=$1
+
 echo "===== Job started at $(date) ====="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Job name: $SLURM_JOB_NAME"
@@ -34,10 +37,8 @@ done) &
 # Save background PID so we can kill it later
 GPU_LOGGER_PID=$!
 
-# Run your script with resource timing
-# This approach only works if I execute a single file
-echo "----- Running Python job -----"
-/usr/bin/time -v python ${JOB_NAME}.py
+# Run the Python script
+/usr/bin/time -v python ${PYTHON_BASE}.py
 
 # Kill the GPU monitoring loop
 kill $GPU_LOGGER_PID
