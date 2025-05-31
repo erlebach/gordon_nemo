@@ -1,5 +1,7 @@
 import os
+import time
 from dataclasses import dataclass
+
 import nemo_run as run
 import pytorch_lightning as pl
 import torch
@@ -77,7 +79,7 @@ def dummy_recipe(
     name: str = "dummy_experiment",
     num_nodes: int = 1,
     num_gpus_per_node: int = 1,
-    # @run.autoconvert does not allow 
+    # @run.autoconvert does not allow
     accelerator: str = "gpu",  # Hardcoded to gpu for now
 ) -> run.Partial:
     # Create recipe configuration using dataclass
@@ -87,7 +89,7 @@ def dummy_recipe(
         name=name,
         num_nodes=num_nodes,
         num_gpus_per_node=num_gpus_per_node,
-        accelerator=accelerator
+        accelerator=accelerator,
     )
 
     # Configure the trainer as a run.Config object using dataclass values
@@ -112,7 +114,7 @@ def dummy_recipe(
         train_function,
         trainer=trainer_config,
         model=model_config,
-        data_module=data_module_config
+        data_module=data_module_config,
     )
 
 
@@ -124,7 +126,7 @@ def create_local_executor(devices: int = 1) -> run.LocalExecutor:
     }
     return run.LocalExecutor(
         ntasks_per_node=1,  # Explicitly set to 1 to avoid multi-process setup
-        # Avoid torchrun if not connected to the internet.  
+        # Avoid torchrun if not connected to the internet.
         # launcher="torchrun",
         launcher=None,  # Set to None to avoid torchrun and distributed setup
         env_vars=env_vars,
@@ -134,8 +136,12 @@ def create_local_executor(devices: int = 1) -> run.LocalExecutor:
 # 8. Main function to run the recipe
 def main():
     recipe = dummy_recipe()
+    # Add a timestamp to the experiment name to ensure uniqueness
+    experiment_name = f"dummy_experiment_run_{int(time.time())}"
     executor = create_local_executor(devices=1)
-    run.run(recipe, executor=executor, name="dummy_experiment_run")
+    run.run(recipe, executor=executor, name=experiment_name)
+    return 0
+
 
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
