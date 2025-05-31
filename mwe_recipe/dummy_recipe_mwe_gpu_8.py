@@ -1,6 +1,7 @@
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 import nemo_run as run
 import pytorch_lightning as pl
@@ -136,8 +137,21 @@ def create_local_executor(devices: int = 1) -> run.LocalExecutor:
 # 8. Main function to run the recipe
 def main():
     recipe = dummy_recipe()
-    # Add a timestamp to the experiment name to ensure uniqueness
-    experiment_name = f"dummy_experiment_run_{int(time.time())}"
+
+    # Check if running under SLURM
+    slurm_job_name = os.environ.get("SLURM_JOB_NAME")
+    slurm_job_id = os.environ.get("SLURM_JOB_ID")
+
+    if slurm_job_name and slurm_job_id:
+        # Use SLURM job name and ID to match output file naming
+        experiment_name = f"{slurm_job_name}_{slurm_job_id}"
+    else:
+        # Fallback for local runs (non-SLURM)
+        script_name = os.path.splitext(os.path.basename(__file__))[0]
+        readable_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = int(time.time())
+        experiment_name = f"{script_name}_{readable_time}_{timestamp}"
+
     executor = create_local_executor(devices=1)
     run.run(recipe, executor=executor, name=experiment_name)
     return 0

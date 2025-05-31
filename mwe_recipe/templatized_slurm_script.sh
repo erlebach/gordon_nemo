@@ -2,7 +2,8 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --output=%x_%j.out
-#SBATCH -J "mwe_llm_cli_factory"
+JOB_NAME="mwe_training_pipeline"
+#SBATCH -J "${JOB_NAME}_$(date +%Y-%m-%d_%H-%M-%S)"
 #SBATCH -t 00:30:00
 #SBATCH -A pilotgpu
 #SBATCH --gres=gpu:1
@@ -34,8 +35,9 @@ done) &
 GPU_LOGGER_PID=$!
 
 # Run your script with resource timing
+# This approach only works if I execute a single file
 echo "----- Running Python job -----"
-/usr/bin/time -v python mwe_llm_cli_factory.py
+/usr/bin/time -v python ${JOB_NAME}.py
 
 # Kill the GPU monitoring loop
 kill $GPU_LOGGER_PID
