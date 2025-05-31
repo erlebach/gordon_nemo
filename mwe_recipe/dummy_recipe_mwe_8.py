@@ -137,7 +137,7 @@ def main():
     executor = create_local_executor(devices=1)
     run.run(recipe, executor=executor, name="dummy_experiment_run")
 
-
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     main()
+    print("exit code")

@@ -5,7 +5,7 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-NAME = dummy_llm 
+NAME = 'dummy_llm'
 
 
 # 1. Define a trivial dataset yielding fixed dummy data
