@@ -14,5 +14,6 @@ PYTHON_SCRIPT_BASE=$2
 # Generate timestamp
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 
-# Submit with job name and pass base name as argument to template
-sbatch -J "${PYTHON_SCRIPT_BASE}_${TIMESTAMP}" "$SLURM_TEMPLATE" "$PYTHON_SCRIPT_BASE"
+# Submit with job name and pass script base name as argument to template
+# sbatch -J "${PYTHON_SCRIPT_BASE}_${TIMESTAMP}" "$SLURM_TEMPLATE" "$PYTHON_SCRIPT_BASE"
+echo sbatch -J "${PYTHON_SCRIPT_BASE}_${TIMESTAMP}" "$SLURM_TEMPLATE" "$PYTHON_SCRIPT_BASE"
