@@ -24,6 +24,16 @@ uv sync
 source ../.venv/bin/activate
 uv pip show nemo-run
 
+echo "PATH"
+echo $PATH
+
+command -v nvidia-smi || echo "nvidia-smi not found even after module load"
+
+
+echo "==> call to nvidia-smi"
+nvidia-smi
+echo "==> end call to nvidia-smi"
+
 # Start GPU usage logging in background
 (while true; do 
     echo "--- $(date) ---" >> gpu_usage_%x_$SLURM_JOB_ID.log

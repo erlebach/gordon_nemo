@@ -2,8 +2,6 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH --output=%x_%j.out
-JOB_NAME="mwe_training_pipeline"
-#SBATCH -J "${JOB_NAME}_$(date +%Y-%m-%d_%H-%M-%S)"
 #SBATCH -t 00:30:00
 #SBATCH -A pilotgpu
 #SBATCH --gres=gpu:1
@@ -26,11 +24,12 @@ module load python-uv
 uv sync
 source ../.venv/bin/activate
 uv pip show nemo-run
+/usr/bin/nvidia-smi
 
 # Start GPU usage logging in background
 (while true; do 
     echo "--- $(date) ---" >> gpu_usage_%x_$SLURM_JOB_ID.log
-    nvidia-smi >> gpu_usage_%x_$SLURM_JOB_ID.log
+    /usr/bin/nvidia-smi >> gpu_usage_%x_$SLURM_JOB_ID.log
     sleep 10
 done) &
 
