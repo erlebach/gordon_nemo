@@ -6,8 +6,8 @@ container: $HOME/containers/cuda_uv_12.sif
 train_script: /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_pretraining.py
 config_path: /opt/NeMo/examples/nlp/language_modeling/conf
 config_name: megatron_gpt_config.yaml
-data_mount: /data
-output_mount: /output
+data_mount: ./data
+output_mount: ./output
 modules:
   - cuda/12.1
   - python-uv

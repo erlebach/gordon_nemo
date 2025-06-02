@@ -15,16 +15,20 @@ export MASTER_ADDR
 export MASTER_PORT=12345
 export WORLD_SIZE=$SLURM_NTASKS
 
-srun bash -c '
+srun bash -c ' 
   export RANK=$SLURM_PROCID
   export LOCAL_RANK=$SLURM_LOCALID
 
   apptainer exec --nv \
-    -B {DATA_MOUNT}:/mnt/data \
-    -B {OUTPUT_MOUNT}:/mnt/output \
-    {CONTAINER} \
+    -B {DATA_MOUNT}:/workspace/data \
+    -B {OUTPUT_MOUNT}:/workspace/output \
+    # -B $(pwd):/workspace/output \
+    {CONTAINER} bash -c '\''
+    uv sync
+    source ../../.venv/bin/activate
     python {TRAIN_SCRIPT} \
       --config-path {CONFIG_PATH} \
       --config-name {CONFIG_NAME} \
       {YAML_OVERRIDES}
+    '\''
 '

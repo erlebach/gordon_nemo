@@ -28,8 +28,8 @@ def render_sbatch(config):
         TRAIN_SCRIPT=config["train_script"],
         CONFIG_PATH=config["config_path"],
         CONFIG_NAME=config["config_name"],
-        DATA_MOUNT=config["data_mount"],
-        OUTPUT_MOUNT=config["output_mount"],
+        DATA_MOUNT= os.path.abspath("./data"),
+        OUTPUT_MOUNT= os.path.abspath("./output"),
         YAML_OVERRIDES=" \\\n    ".join(config["overrides"]),
         MODULE_LOADS=modules,
     )
