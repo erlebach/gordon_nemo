@@ -1,3 +1,9 @@
+# Table of Contents
+
+- [slurm+apptainer](#slurm+apptainer)
+
+
+
 # Slurm Apptainer NeMo Setup
 
 ## Overview
@@ -11,6 +17,7 @@
 ## Conversation
 👉 - Indicates the current conversation path
 
+<a id="slurm+apptainer"/>
 <i>[6/3/2025, 9:13:24 AM]</i> 👉 <b>👤 User</b>: 
 
 I am on a cluster with Slurm and Apptainer. There is no Docker or Pyxis. Tell me the necessary changes to the scripts at url https://docs.nvidia.com/nemo-framework/user-guide/latest/nemo-2.0/quickstart.html
