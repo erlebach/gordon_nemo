@@ -14,13 +14,34 @@ fi
 
 echo "Project directory: $PROJECT_DIR"
 
-# Clean up UV cache first
-echo "Cleaning up UV cache to free space..."
-rm -rf ~/.cache/uv 2>/dev/null || echo "No UV cache to clean"
+# Set up persistent cache in scratch space
+SCRATCH_CACHE_BASE="/tmp/scratch/gerlebacher"
+PERSISTENT_CACHE_DIR="$SCRATCH_CACHE_BASE/.cache"
+
+# Create cache directories if they don't exist
+mkdir -p "$PERSISTENT_CACHE_DIR"
+
+# Set cache environment variables to persistent locations
+export UV_CACHE_DIR="$PERSISTENT_CACHE_DIR/uv"
+export PIP_CACHE_DIR="$PERSISTENT_CACHE_DIR/pip"
+export HF_HOME="$PERSISTENT_CACHE_DIR/huggingface"
+export XDG_CACHE_HOME="$PERSISTENT_CACHE_DIR"
+
+echo "Using persistent cache directories:"
+echo "  UV cache: $UV_CACHE_DIR"
+echo "  PIP cache: $PIP_CACHE_DIR"
+echo "  HF cache: $HF_HOME"
+
+# Check current cache sizes
+echo "Current cache sizes:"
+echo "  UV: $(du -sh $UV_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
+echo "  PIP: $(du -sh $PIP_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
+echo "  HF: $(du -sh $HF_HOME 2>/dev/null | cut -f1 || echo 'empty')"
 
 # Check disk usage
 echo "Checking disk usage:"
 df -h "$HOME" | head -2
+df -h "$SCRATCH_CACHE_BASE" | head -2 2>/dev/null || echo "Scratch space not yet available"
 
 # Clean up any existing .venv
 if [ -d ".venv" ]; then
@@ -62,10 +83,7 @@ EOF
 
 mv pyproject_minimal.toml pyproject.toml
 
-# Use /tmp for UV cache instead of home directory
-export UV_CACHE_DIR="/tmp/uv_cache_$$"
-echo "Using temporary UV cache: $UV_CACHE_DIR"
-
+echo "Running uv sync (this will populate the cache)..."
 uv sync --no-config
 
 echo "Verifying base installation..."
@@ -81,11 +99,18 @@ cd "$PROJECT_DIR"
 
 # Clean up temporary files
 rm -rf "$WORK_DIR"
-rm -rf "/tmp/uv_cache_$$"
+
+# Show final cache sizes
+echo ""
+echo "Cache populated! Final sizes:"
+echo "  UV: $(du -sh $UV_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
+echo "  PIP: $(du -sh $PIP_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
+echo "  HF: $(du -sh $HF_HOME 2>/dev/null | cut -f1 || echo 'empty')"
 
 echo ""
 echo "SUCCESS: Minimal base environment created!"
 echo "Location: $PROJECT_DIR/.venv"
 echo "Size: $(du -sh .venv | cut -f1)"
 echo ""
+echo "Cache is now populated for fast job execution."
 echo "NeMo and CUDA packages will be installed on compute nodes." 

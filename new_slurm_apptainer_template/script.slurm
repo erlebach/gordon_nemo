@@ -18,27 +18,34 @@ if [ -z "$1" ]; then
 fi
 PYTHON_SCRIPT=$1
 
-# --- 2. Set up cache directories in scratch space ---
-SCRATCH_CACHE="${TMPDIR:-/tmp}/cache_${SLURM_JOB_ID}"
+# --- 2. Set up persistent cache directories (same as prepare_environment_host.sh) ---
+SCRATCH_CACHE_BASE="/tmp/scratch/gerlebacher"
+PERSISTENT_CACHE_DIR="$SCRATCH_CACHE_BASE/.cache"
 
-# Set cache environment variables - let apps create the directories automatically
-export UV_CACHE_DIR="$SCRATCH_CACHE/uv"
-export PIP_CACHE_DIR="$SCRATCH_CACHE/pip"
-export HF_HOME="$SCRATCH_CACHE/huggingface"
-export XDG_CACHE_HOME="$SCRATCH_CACHE"
+# Use the same persistent cache that was populated during preparation
+export UV_CACHE_DIR="$PERSISTENT_CACHE_DIR/uv"
+export PIP_CACHE_DIR="$PERSISTENT_CACHE_DIR/pip"
+export HF_HOME="$PERSISTENT_CACHE_DIR/huggingface"
+export XDG_CACHE_HOME="$PERSISTENT_CACHE_DIR"
 
-echo "Cache base directory: $SCRATCH_CACHE"
-echo "UV cache: $UV_CACHE_DIR"
-echo "PIP cache: $PIP_CACHE_DIR"
-echo "HuggingFace cache: $HF_HOME"
+echo "Using persistent cache directories:"
+echo "  UV cache: $UV_CACHE_DIR"
+echo "  PIP cache: $PIP_CACHE_DIR"
+echo "  HF cache: $HF_HOME"
+
+# Show current cache sizes
+echo "Current cache sizes:"
+echo "  UV: $(du -sh $UV_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
+echo "  PIP: $(du -sh $PIP_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
+echo "  HF: $(du -sh $HF_HOME 2>/dev/null | cut -f1 || echo 'empty')"
 
 # --- 3. Define paths and environment variables ---
 CONTAINER_IMG="$HOME/containers/cuda_uv_12.sif"
 SUBMIT_DIR="$SLURM_SUBMIT_DIR"
-SCRATCH_DIR="/tmp/scratch/gerlebacher/${SLURM_JOB_ID}"
+SCRATCH_DIR="$SCRATCH_CACHE_BASE/${SLURM_JOB_ID}"
 
-# --- 4. Set up scratch directory ---
-echo "Creating scratch directory: $SCRATCH_DIR"
+# --- 4. Set up job-specific scratch directory ---
+echo "Creating job scratch directory: $SCRATCH_DIR"
 mkdir -p "$SCRATCH_DIR"
 
 if [ ! -d "$SCRATCH_DIR" ]; then
