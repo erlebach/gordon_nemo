@@ -6,6 +6,11 @@ echo "Updating Python environment on frontend (adding CUDA packages)..."
 
 PROJECT_DIR="$PWD"
 
+# Clear any existing virtual environment variables to avoid conflicts
+unset VIRTUAL_ENV
+unset CONDA_PREFIX
+unset CONDA_DEFAULT_ENV
+
 # Check if pyproject.toml exists
 if [ ! -f "pyproject.toml" ]; then
     echo "ERROR: pyproject.toml not found in current directory"
@@ -70,11 +75,16 @@ if [ -d "$PROJECT_DIR/.venv" ]; then
 fi
 
 # Set environment variables for CUDA package builds
-export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0"  # Support multiple GPU architectures
-export FORCE_CUDA="1"  # Force CUDA build for apex
-export MAX_JOBS="4"    # Limit parallel builds to avoid memory issues
+export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0"
+export FORCE_CUDA="1"
+export MAX_JOBS="4"
 
-echo "Running uv sync with --no-build-isolation for CUDA packages..."
+echo "Installing setuptools and build dependencies first..."
+# Install build dependencies first
+uv pip install setuptools wheel --no-config || echo "Warning: setuptools installation failed"
+
+echo "Running uv sync with build isolation disabled..."
+# Use --no-build-isolation and ensure we have the build tools
 uv sync --no-config --no-build-isolation
 
 echo "Verifying updated installation..."
