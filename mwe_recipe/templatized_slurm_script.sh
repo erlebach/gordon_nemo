@@ -8,6 +8,7 @@
 #SBATCH --mem=48GB
 
 # Get the Python script base name from argument
+# Assume I am running a single script
 PYTHON_BASE=$1
 
 echo "===== Job started at $(date) ====="
@@ -36,8 +37,10 @@ done) &
 # Save background PID so we can kill it later
 GPU_LOGGER_PID=$!
 
+######################
 # Run the Python script
 /usr/bin/time -v python ${PYTHON_BASE}.py
+######################
 
 # Kill the GPU monitoring loop
 kill $GPU_LOGGER_PID

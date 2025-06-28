@@ -16,8 +16,9 @@ echo "SLURM Job ID: $SLURM_JOB_ID"
 
 # Define container and host paths
 # SIF_IMAGE="$HOME/containers/cuda_nvidia_12.sif"
-SIF_IMAGE="$HOME/containers/cuda_uv_12.sif
-PROJECT_DIR="$HOME/src/gordon_nemo"                      # contains pyproject.toml, configs/
+SIF_IMAGE="$HOME/containers/cuda_uv_12.sif"
+# PROJECT_DIR contains pyproject.toml, configs/
+PROJECT_DIR="$HOME/src/gordon_nemo"                      
 EXPERIMENT_CONFIG="configs/finetune_lora.yaml"
 EXPERIMENT_OUTPUT="$HOME/nemo_experiments/job_${SLURM_JOB_ID}"
 
@@ -39,6 +40,7 @@ BIND_FLAGS+=" --bind $EXPERIMENT_OUTPUT:/workspace/output"
 mkdir -p "$EXPERIMENT_OUTPUT"
 
 # Run experiment using nemo-run inside the container
+# Use the Python in the container
 apptainer exec --nv $BIND_FLAGS "$SIF_IMAGE" bash -c '
   set -e
   cd /workspace
@@ -46,4 +48,6 @@ apptainer exec --nv $BIND_FLAGS "$SIF_IMAGE" bash -c '
   source .venv/bin/activate
   uv sync
   nemo-run --config='"$EXPERIMENT_CONFIG"' --output_dir=/workspace/output
+  echo "python version: "
+  echo `python --version`
 '

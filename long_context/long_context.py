@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 from nemo.collections.nlp.modules.common.megatron.utils import init_method_normal
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 
@@ -49,6 +49,10 @@ DIM = 512
 NUM_BLOCKS = 8
 BATCH_SIZE = 2
 NUM_GPUS = 2  # Set to your available GPU count
+
+SEQ_LEN = 512  # Very long context
+DIM = 128
+NUM_BLOCKS = 2
 
 # DataLoader
 dataset = SyntheticDataset(SEQ_LEN, DIM)
