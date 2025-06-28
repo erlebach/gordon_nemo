@@ -24,8 +24,24 @@ SUBMIT_DIR="$SLURM_SUBMIT_DIR"
 SCRATCH_DIR="/scratch/${USER}/${SLURM_JOB_ID}"
 
 # --- 3. Set up scratch directory ---
+echo "Creating scratch directory: $SCRATCH_DIR"
 mkdir -p "$SCRATCH_DIR"
-echo "Job will run in scratch directory: $SCRATCH_DIR"
+
+# Verify scratch directory was created successfully
+if [ ! -d "$SCRATCH_DIR" ]; then
+    echo "ERROR: Failed to create scratch directory: $SCRATCH_DIR"
+    exit 1
+fi
+
+# Test write permissions
+if ! touch "$SCRATCH_DIR/test_file" 2>/dev/null; then
+    echo "ERROR: Cannot write to scratch directory: $SCRATCH_DIR"
+    exit 1
+fi
+rm -f "$SCRATCH_DIR/test_file"
+
+echo "Scratch directory created successfully: $SCRATCH_DIR"
+ls -la "$SCRATCH_DIR"
 
 # --- 4. Load modules for host-side tools (like nvidia-smi) ---
 module load cuda/12.1
@@ -72,7 +88,10 @@ apptainer exec --nv \
         cd /scratch
 
         echo 'Step 4: Executing Python script...'
-        python /app/$PYTHON_SCRIPT
+        echo 'About to run: python /app/$PYTHON_SCRIPT'
+        python -u /app/$PYTHON_SCRIPT
+        PYTHON_EXIT_CODE=$?
+        echo "Python script finished with exit code: $PYTHON_EXIT_CODE"
         echo '--- Python script finished ---'
     "
 
