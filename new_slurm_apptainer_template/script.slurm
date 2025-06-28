@@ -27,22 +27,14 @@ SCRATCH_DIR="/tmp/scratch/gerlebacher/${SLURM_JOB_ID}"
 echo "Creating scratch directory: $SCRATCH_DIR"
 mkdir -p "$SCRATCH_DIR"
 
-# Verify scratch directory was created successfully
 if [ ! -d "$SCRATCH_DIR" ]; then
     echo "ERROR: Failed to create scratch directory: $SCRATCH_DIR"
     exit 1
 fi
 
-# Test write permissions
-if ! touch "$SCRATCH_DIR/test_file" 2>/dev/null; then
-    echo "ERROR: Cannot write to scratch directory: $SCRATCH_DIR"
-    exit 1
-fi
-rm -f "$SCRATCH_DIR/test_file"
-
 echo "Scratch directory created successfully: $SCRATCH_DIR"
 
-# --- 4. Load modules for host-side tools ---
+# --- 4. Load modules ---
 module load cuda/12.1
 
 # --- 5. Start GPU monitoring in the background ---
@@ -55,8 +47,6 @@ echo "Starting GPU monitoring... log will be at $SCRATCH_DIR/gpu_usage.log"
     done
 ) > "$SCRATCH_DIR/gpu_usage.log" 2>&1 &
 GPU_LOGGER_PID=$!
-
-echo "GPU monitoring started with PID: $GPU_LOGGER_PID"
 
 # --- 6. Log job details ---
 echo "===== Job Details ====="
@@ -81,44 +71,30 @@ apptainer exec --nv \
         set -e
         echo '--- Inside container ---'
         echo 'Working directory:' \$(pwd)
-        echo 'Container scratch directory contents:'
-        ls -la /scratch
-        echo 'Submit directory contents:'
-        ls -la /app
         
-        echo 'Step 1: Copy project files to scratch (avoiding pyproject.toml conflicts)...'
-        # Copy the Python script
+        echo 'Step 1: Copy project files to scratch...'
         cp /app/$PYTHON_SCRIPT .
         
-        # Copy pyproject.toml if it exists in the submit directory
-        if [ -f /app/pyproject.toml ]; then
-            cp /app/pyproject.toml .
-            echo 'Copied pyproject.toml to scratch directory'
+        echo 'Step 2: Copy pre-built virtual environment...'
+        if [ -d /app/.venv ]; then
+            cp -r /app/.venv .
+            echo 'Virtual environment copied successfully'
         else
-            echo 'No pyproject.toml found in submit directory'
+            echo 'ERROR: No .venv found in submit directory!'
+            echo 'Please run prepare_environment.sh on the frontend first.'
+            exit 1
         fi
-        
-        # Copy uv.lock if it exists
-        if [ -f /app/uv.lock ]; then
-            cp /app/uv.lock .
-            echo 'Copied uv.lock to scratch directory'
-        fi
-        
-        # Copy any other necessary files (add as needed)
-        # cp /app/requirements.txt . 2>/dev/null || true
-        
-        echo 'Scratch directory contents after copying:'
-        ls -la
-        
-        echo 'Step 2: Synchronizing Python environment with uv...'
-        export PYTHONUNBUFFERED=1
-        uv sync --quiet
         
         echo 'Step 3: Activating virtual environment...'
         source .venv/bin/activate
         
-        echo 'Step 4: Executing Python script...'
-        echo \"About to run: python -u $PYTHON_SCRIPT\"
+        echo 'Step 4: Verify environment...'
+        python -c 'import sys; print(f\"Python: {sys.version}\")'
+        python -c 'import numpy; print(f\"NumPy: {numpy.__version__}\")' || echo 'NumPy not available'
+        python -c 'import matplotlib; print(f\"Matplotlib: {matplotlib.__version__}\")' || echo 'Matplotlib not available'
+        
+        echo 'Step 5: Executing Python script...'
+        export PYTHONUNBUFFERED=1
         python -u $PYTHON_SCRIPT
         PYTHON_EXIT_CODE=\$?
         echo \"Python script finished with exit code: \$PYTHON_EXIT_CODE\"
@@ -149,8 +125,7 @@ else
     echo "GPU usage log file not found: $SCRATCH_DIR/gpu_usage.log"
 fi
 
-# --- 10. Cleanup scratch directory (optional) ---
+# --- 10. Cleanup scratch directory ---
 echo "Cleaning up scratch directory: $SCRATCH_DIR"
-# I only wish to delete scratch if there are no errors. 
-#rm -rf "$SCRATCH_DIR"
+rm -rf "$SCRATCH_DIR"
 echo "Cleanup completed"
