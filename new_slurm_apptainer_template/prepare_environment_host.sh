@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Preparing FULL Python environment on frontend (including CUDA packages)..."
+echo "Updating Python environment on frontend (adding CUDA packages)..."
 
 PROJECT_DIR="$PWD"
 
@@ -33,18 +33,18 @@ export XDG_CACHE_HOME="$PERSISTENT_CACHE_DIR"
 
 echo "Using persistent cache directories:"
 echo "  UV cache: $UV_CACHE_DIR"
-echo "  PIP cache: $PIP_CACHE_DIR"
-echo "  HF cache: $HF_HOME"
 
 # Show CUDA environment
 echo "CUDA environment:"
 echo "  CUDA_HOME: ${CUDA_HOME:-not set}"
 echo "  nvcc: $(which nvcc 2>/dev/null || echo 'not found')"
 
-# Remove any existing .venv
+# Check if .venv exists
 if [ -d ".venv" ]; then
-    echo "Removing existing .venv directory..."
-    rm -rf .venv
+    echo "Found existing .venv - will update it incrementally"
+    echo "Current size: $(du -sh .venv | cut -f1)"
+else
+    echo "No existing .venv found - will create new one"
 fi
 
 # Check if uv is available
@@ -58,35 +58,39 @@ WORK_DIR="/tmp/isolated_project_$$"
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
-echo "Creating FULL environment (including CUDA packages)..."
+echo "Setting up isolated work environment..."
 cp "$PROJECT_DIR/pyproject.toml" .
 cp "$PROJECT_DIR/uv.lock" . 2>/dev/null || echo "No existing uv.lock found (will be created)"
+
+# Copy existing .venv if it exists (much faster than rebuilding)
+if [ -d "$PROJECT_DIR/.venv" ]; then
+    echo "Copying existing .venv to work directory..."
+    cp -r "$PROJECT_DIR/.venv" .
+    echo "Copied successfully"
+fi
 
 # Set environment variables for CUDA package builds
 export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0"  # Support multiple GPU architectures
 export FORCE_CUDA="1"  # Force CUDA build for apex
 export MAX_JOBS="4"    # Limit parallel builds to avoid memory issues
 
-echo "Building full environment with CUDA packages..."
-echo "This may take several minutes for first-time builds..."
+echo "Running uv sync with --no-build-isolation for CUDA packages..."
+uv sync --no-config --no-build-isolation
 
-# Use --no-build-isolation for packages that need torch during build
-uv sync --no-config
-
-echo "Verifying FULL installation..."
+echo "Verifying updated installation..."
 source .venv/bin/activate
 
-echo "Testing base packages..."
-python -c 'import sys; print(f"Python: {sys.version}")'
-python -c 'import numpy; print(f"NumPy: {numpy.__version__}")'
+echo "Testing packages..."
 python -c 'import torch; print(f"PyTorch: {torch.__version__}, CUDA available: {torch.cuda.is_available()}")'
 python -c 'import nemo; print(f"NeMo: {nemo.__version__}")'
+python -c 'import apex; print(f"Apex: available")' || echo 'Apex: FAILED to import'
+python -c 'import transformer_engine; print(f"TransformerEngine: available")' || echo 'TransformerEngine: FAILED to import'
 
-echo "Testing CUDA packages..."
-python -c 'import apex; print(f"Apex: available")' || echo 'Apex: FAILED'
-python -c 'import transformer_engine; print(f"TransformerEngine: available")' || echo 'TransformerEngine: FAILED'
-
-echo "Moving environment and lock file to project directory..."
+echo "Moving updated environment back to project directory..."
+# Remove old .venv only after successful build
+if [ -d "$PROJECT_DIR/.venv" ]; then
+    rm -rf "$PROJECT_DIR/.venv"
+fi
 mv .venv "$PROJECT_DIR/"
 mv uv.lock "$PROJECT_DIR/" 2>/dev/null || echo "No uv.lock to move"
 
@@ -94,13 +98,9 @@ cd "$PROJECT_DIR"
 rm -rf "$WORK_DIR"
 
 echo ""
-echo "SUCCESS: FULL environment created!"
+echo "SUCCESS: Environment updated!"
 echo "Location: $PROJECT_DIR/.venv"
 echo "Lock file: $PROJECT_DIR/uv.lock"
-echo "Size: $(du -sh .venv | cut -f1)"
+echo "Final size: $(du -sh .venv | cut -f1)"
 echo ""
-echo "Cache sizes:"
-echo "  UV: $(du -sh $UV_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
-echo ""
-echo "You can now run: uv run python your_script.py"
-echo "Or activate with: source .venv/bin/activate" 
+echo "You can now run: uv run python your_script.py" 
