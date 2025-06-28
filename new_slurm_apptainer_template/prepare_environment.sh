@@ -38,45 +38,28 @@ apptainer exec --nv \
     "$CONTAINER_IMG" \
     bash -c "
         set -e
-        echo 'Inside container, working in isolated directory:' \$(pwd)
+        
+        # Install git temporarily in the container session
+        apt-get update && apt-get install -y git
         
         # Create isolated work directory
         WORK_DIR=/tmp/isolated_project_$$
         mkdir -p \$WORK_DIR
         cd \$WORK_DIR
-        echo 'Isolated work directory:' \$(pwd)
         
-        # Copy project files to isolated directory
-        echo 'Copying project files to isolated directory...'
+        # Copy project files
         cp /app/pyproject.toml .
-        cp /app/uv.lock . 2>/dev/null || echo 'No uv.lock found (will be created)'
+        cp /app/uv.lock . 2>/dev/null || true
         
-        echo 'Files in isolated directory:'
-        ls -la
-        
-        echo 'Creating virtual environment in isolation...'
+        # Now uv sync will work with git dependencies
         export UV_CACHE_DIR=/tmp/uv_cache_$$
-        export PYTHONUNBUFFERED=1
+        uv sync --no-config
         
-        # Use --isolated flag to ignore any parent pyproject.toml files
-        uv sync --isolated
-        
-        echo 'Verifying installation...'
-        source .venv/bin/activate
-        python -c 'import sys; print(f\"Python: {sys.version}\")'
-        python -c 'import numpy; print(f\"NumPy: {numpy.__version__}\")' || echo 'NumPy not available'
-        python -c 'import matplotlib; print(f\"Matplotlib: {matplotlib.__version__}\")' || echo 'Matplotlib not available'
-        
-        echo 'Copying virtual environment back to project directory...'
+        # Copy back the 6.7GB .venv
         cp -r .venv /app/
         
-        # Also copy back uv.lock if it was created/updated
-        cp uv.lock /app/ 2>/dev/null || echo 'No uv.lock to copy back'
-        
-        echo 'Cleaning up temporary files...'
-        cd /tmp
-        rm -rf \$WORK_DIR
-        rm -rf /tmp/uv_cache_$$
+        # Cleanup
+        cd /tmp && rm -rf \$WORK_DIR && rm -rf /tmp/uv_cache_$$
     "
 
 if [ $? -eq 0 ]; then
