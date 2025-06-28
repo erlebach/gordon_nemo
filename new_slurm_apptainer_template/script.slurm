@@ -151,5 +151,6 @@ fi
 
 # --- 10. Cleanup scratch directory (optional) ---
 echo "Cleaning up scratch directory: $SCRATCH_DIR"
-rm -rf "$SCRATCH_DIR"
+# I only wish to delete scratch if there are no errors. 
+#rm -rf "$SCRATCH_DIR"
 echo "Cleanup completed"
