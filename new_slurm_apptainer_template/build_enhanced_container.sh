@@ -1,11 +1,10 @@
-#!/bin/bash -x
+#!/bin/bash
 
 set -e
 
 echo "Building enhanced CUDA + UV container with pre-installed dependencies..."
-echo $HOME
 
-# Container names
+# Container names using $HOME
 BASE_CONTAINER="$HOME/containers/cuda_uv_12.sif"
 NEW_CONTAINER="$HOME/containers/cuda_uv_12_with_deps.sif"
 DEF_FILE="cuda_uv_with_deps.def"
@@ -36,14 +35,19 @@ echo "New container: $NEW_CONTAINER"
 echo "Definition file: $DEF_FILE"
 echo ""
 
-# Build the container
-echo "Starting build process..."
-apptainer build --fakeroot "$NEW_CONTAINER" "$DEF_FILE"
+# Create containers directory if it doesn't exist
+mkdir -p "$(dirname "$NEW_CONTAINER")"
+
+# Try building without fakeroot first
+echo "Attempting build without fakeroot..."
+apptainer build "$NEW_CONTAINER" "$DEF_FILE"
 
 if [ $? -eq 0 ]; then
     echo ""
     echo "SUCCESS: Container built successfully!"
     echo "New container: $NEW_CONTAINER"
+    
+    # Test the container
     echo ""
     echo "Testing the container..."
     apptainer exec --nv "$NEW_CONTAINER" python -c "
@@ -65,6 +69,20 @@ except ImportError:
     echo "Container is ready for use!"
     echo "Update your SLURM script to use: $NEW_CONTAINER"
 else
-    echo "ERROR: Container build failed!"
-    exit 1
+    echo ""
+    echo "Build without fakeroot failed. Trying with sudo..."
+    
+    # Try with sudo if available
+    if command -v sudo &> /dev/null; then
+        echo "Attempting build with sudo..."
+        sudo apptainer build "$NEW_CONTAINER" "$DEF_FILE"
+    else
+        echo "ERROR: Container build failed and sudo not available!"
+        echo ""
+        echo "Alternative solutions:"
+        echo "1. Try building on a different node"
+        echo "2. Use apptainer build --sandbox for testing"
+        echo "3. Contact your HPC admin about fakeroot configuration"
+        exit 1
+    fi
 fi
