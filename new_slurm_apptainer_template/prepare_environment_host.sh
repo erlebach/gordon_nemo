@@ -2,7 +2,7 @@
 
 set -e
 
-echo "Preparing base Python environment on frontend (excluding CUDA packages)..."
+echo "Preparing FULL Python environment on frontend (including CUDA packages)..."
 
 PROJECT_DIR="$PWD"
 
@@ -13,6 +13,10 @@ if [ ! -f "pyproject.toml" ]; then
 fi
 
 echo "Project directory: $PROJECT_DIR"
+
+# Load CUDA module for build headers (not runtime)
+echo "Loading CUDA module for build headers..."
+module load cuda/12.1
 
 # Set up persistent cache in scratch space
 SCRATCH_CACHE_BASE="/tmp/scratch/gerlebacher"
@@ -32,18 +36,12 @@ echo "  UV cache: $UV_CACHE_DIR"
 echo "  PIP cache: $PIP_CACHE_DIR"
 echo "  HF cache: $HF_HOME"
 
-# Check current cache sizes
-echo "Current cache sizes:"
-echo "  UV: $(du -sh $UV_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
-echo "  PIP: $(du -sh $PIP_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
-echo "  HF: $(du -sh $HF_HOME 2>/dev/null | cut -f1 || echo 'empty')"
+# Show CUDA environment
+echo "CUDA environment:"
+echo "  CUDA_HOME: ${CUDA_HOME:-not set}"
+echo "  nvcc: $(which nvcc 2>/dev/null || echo 'not found')"
 
-# Check disk usage
-echo "Checking disk usage:"
-df -h "$HOME" | head -2
-df -h "$SCRATCH_CACHE_BASE" | head -2 2>/dev/null || echo "Scratch space not yet available"
-
-# Clean up any existing .venv
+# Remove any existing .venv
 if [ -d ".venv" ]; then
     echo "Removing existing .venv directory..."
     rm -rf .venv
@@ -55,62 +53,54 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
-# Create isolated work directory in /tmp (not in home directory)
+# Create isolated work directory in /tmp
 WORK_DIR="/tmp/isolated_project_$$"
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 
-echo "Creating base environment in temporary location..."
+echo "Creating FULL environment (including CUDA packages)..."
 cp "$PROJECT_DIR/pyproject.toml" .
+cp "$PROJECT_DIR/uv.lock" . 2>/dev/null || echo "No existing uv.lock found (will be created)"
 
-# Create a minimal pyproject.toml without heavy packages
-cat > pyproject_minimal.toml << 'EOF'
-[project]
-name = "slurm-apptainer-template"
-version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = [
-    "numpy>=1.24.0",
-    "matplotlib>=3.8.0",
-    "torch>=2.0.0",
-    "pandas>=2.0.0",
-    "tqdm",
-    "hydra-core",
-    # Try minimal NeMo or exclude it entirely for now
-    # "nemo-toolkit>=2.1.0",
-]
-EOF
+# Set environment variables for CUDA package builds
+export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0"  # Support multiple GPU architectures
+export FORCE_CUDA="1"  # Force CUDA build for apex
+export MAX_JOBS="4"    # Limit parallel builds to avoid memory issues
 
-mv pyproject_minimal.toml pyproject.toml
+echo "Building full environment with CUDA packages..."
+echo "This may take several minutes for first-time builds..."
 
-echo "Running uv sync (this will populate the cache)..."
+# Use --no-build-isolation for packages that need torch during build
 uv sync --no-config
 
-echo "Verifying base installation..."
+echo "Verifying FULL installation..."
 source .venv/bin/activate
+
+echo "Testing base packages..."
 python -c 'import sys; print(f"Python: {sys.version}")'
 python -c 'import numpy; print(f"NumPy: {numpy.__version__}")'
-python -c 'import torch; print(f"PyTorch: {torch.__version__}")'
+python -c 'import torch; print(f"PyTorch: {torch.__version__}, CUDA available: {torch.cuda.is_available()}")'
+python -c 'import nemo; print(f"NeMo: {nemo.__version__}")'
 
-echo "Moving environment to project directory..."
+echo "Testing CUDA packages..."
+python -c 'import apex; print(f"Apex: available")' || echo 'Apex: FAILED'
+python -c 'import transformer_engine; print(f"TransformerEngine: available")' || echo 'TransformerEngine: FAILED'
+
+echo "Moving environment and lock file to project directory..."
 mv .venv "$PROJECT_DIR/"
+mv uv.lock "$PROJECT_DIR/" 2>/dev/null || echo "No uv.lock to move"
 
 cd "$PROJECT_DIR"
-
-# Clean up temporary files
 rm -rf "$WORK_DIR"
 
-# Show final cache sizes
 echo ""
-echo "Cache populated! Final sizes:"
-echo "  UV: $(du -sh $UV_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
-echo "  PIP: $(du -sh $PIP_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
-echo "  HF: $(du -sh $HF_HOME 2>/dev/null | cut -f1 || echo 'empty')"
-
-echo ""
-echo "SUCCESS: Minimal base environment created!"
+echo "SUCCESS: FULL environment created!"
 echo "Location: $PROJECT_DIR/.venv"
+echo "Lock file: $PROJECT_DIR/uv.lock"
 echo "Size: $(du -sh .venv | cut -f1)"
 echo ""
-echo "Cache is now populated for fast job execution."
-echo "NeMo and CUDA packages will be installed on compute nodes." 
+echo "Cache sizes:"
+echo "  UV: $(du -sh $UV_CACHE_DIR 2>/dev/null | cut -f1 || echo 'empty')"
+echo ""
+echo "You can now run: uv run python your_script.py"
+echo "Or activate with: source .venv/bin/activate" 
