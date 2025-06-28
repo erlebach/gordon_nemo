@@ -67,11 +67,23 @@ echo "Setting up isolated work environment..."
 cp "$PROJECT_DIR/pyproject.toml" .
 cp "$PROJECT_DIR/uv.lock" . 2>/dev/null || echo "No existing uv.lock found (will be created)"
 
-# Copy existing .venv if it exists (much faster than rebuilding)
+# Create virtual environment first
+echo "Creating virtual environment..."
+uv venv
+
+# Activate the virtual environment
+echo "Activating virtual environment..."
+source .venv/bin/activate
+
+# Install setuptools and build tools first
+echo "Installing build dependencies..."
+uv pip install setuptools wheel
+
+# Copy existing .venv content if it exists (after we have a working venv)
 if [ -d "$PROJECT_DIR/.venv" ]; then
-    echo "Copying existing .venv to work directory..."
-    cp -r "$PROJECT_DIR/.venv" .
-    echo "Copied successfully"
+    echo "Copying packages from existing .venv..."
+    # Copy site-packages from existing environment
+    cp -r "$PROJECT_DIR/.venv/lib/python3.10/site-packages/"* .venv/lib/python3.10/site-packages/ 2>/dev/null || echo "Some packages may not have copied"
 fi
 
 # Set environment variables for CUDA package builds
@@ -79,18 +91,10 @@ export TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;9.0"
 export FORCE_CUDA="1"
 export MAX_JOBS="4"
 
-echo "Installing setuptools and build dependencies first..."
-# Install build dependencies first
-uv pip install setuptools wheel --no-config || echo "Warning: setuptools installation failed"
-
 echo "Running uv sync with build isolation disabled..."
-# Use --no-build-isolation and ensure we have the build tools
-uv sync --no-config --no-build-isolation
+uv sync --no-build-isolation
 
 echo "Verifying updated installation..."
-source .venv/bin/activate
-
-echo "Testing packages..."
 python -c 'import torch; print(f"PyTorch: {torch.__version__}, CUDA available: {torch.cuda.is_available()}")'
 python -c 'import nemo; print(f"NeMo: {nemo.__version__}")'
 python -c 'import apex; print(f"Apex: available")' || echo 'Apex: FAILED to import'
