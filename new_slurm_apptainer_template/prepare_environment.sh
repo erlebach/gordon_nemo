@@ -55,7 +55,16 @@ apptainer exec --nv \
         export UV_CACHE_DIR=/tmp/uv_cache_$$
         uv sync --no-config
         
-        # Copy back the 6.7GB .venv
+        # Use --isolated flag to ignore any parent pyproject.toml files
+        uv sync --no-config
+        
+        echo 'Verifying installation...'
+        source .venv/bin/activate
+        python -c 'import sys; print(f\"Python: {sys.version}\")'
+        python -c 'import numpy; print(f\"NumPy: {numpy.__version__}\")' || echo 'NumPy not available'
+        python -c 'import matplotlib; print(f\"Matplotlib: {matplotlib.__version__}\")' || echo 'Matplotlib not available'
+        
+        echo 'Copying virtual environment back to project directory...'
         cp -r .venv /app/
         
         # Cleanup
