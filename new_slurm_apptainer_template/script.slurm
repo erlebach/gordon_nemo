@@ -72,7 +72,7 @@ apptainer exec --nv \
         cd /scratch
 
         echo 'Step 4: Executing Python script...'
-        python /app/$PYTHON_SCRIPT
+        python -u /app/$PYTHON_SCRIPT
         echo '--- Python script finished ---'
     "
 
