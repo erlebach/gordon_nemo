@@ -88,12 +88,40 @@ apptainer exec --nv \
         echo 'Step 3: Activating virtual environment...'
         source .venv/bin/activate
         
-        echo 'Step 4: Verify environment...'
-        python -c 'import sys; print(f\"Python: {sys.version}\")'
-        python -c 'import numpy; print(f\"NumPy: {numpy.__version__}\")' || echo 'NumPy not available'
-        python -c 'import matplotlib; print(f\"Matplotlib: {matplotlib.__version__}\")' || echo 'Matplotlib not available'
+        echo 'Step 4: Installing CUDA-specific packages from local sources...'
         
-        echo 'Step 5: Executing Python script...'
+        # Check if local CUDA packages are available
+        if [ -d /app/cuda_packages ]; then
+            echo 'Found local CUDA packages, copying to scratch...'
+            cp -r /app/cuda_packages .
+            
+            echo 'Installing apex from local source...'
+            cd cuda_packages/apex
+            # Install apex with CUDA extensions
+            pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation \
+                --config-settings "--build-option=--cpp_ext" \
+                --config-settings "--build-option=--cuda_ext" ./ || echo 'Warning: apex installation failed'
+            cd ../..
+            
+            echo 'Installing TransformerEngine from local source...'
+            cd cuda_packages/TransformerEngine
+            pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation ./ || echo 'Warning: TransformerEngine installation failed'
+            cd ../..
+            
+        else
+            echo 'No local CUDA packages found, trying online installation...'
+            pip install apex --no-build-isolation || echo 'Warning: apex installation failed'
+            pip install git+https://github.com/NVIDIA/TransformerEngine.git || echo 'Warning: TransformerEngine installation failed'
+        fi
+        
+        echo 'Step 5: Verify complete environment...'
+        python -c 'import sys; print(f\"Python: {sys.version}\")'
+        python -c 'import torch; print(f\"PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}\")' || echo 'PyTorch not available'
+        python -c 'import nemo; print(f\"NeMo: {nemo.__version__}\")' || echo 'NeMo not available'
+        python -c 'import apex; print(f\"Apex available\")' || echo 'Apex not available'
+        python -c 'import transformer_engine; print(f\"TransformerEngine available\")' || echo 'TransformerEngine not available'
+        
+        echo 'Step 6: Executing Python script...'
         export PYTHONUNBUFFERED=1
         python -u $PYTHON_SCRIPT
         PYTHON_EXIT_CODE=\$?

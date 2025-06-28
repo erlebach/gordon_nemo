@@ -32,15 +32,20 @@ fi
 
 # Create virtual environment using container in isolated directory
 echo "Creating virtual environment with uv (avoiding parent pyproject.toml conflicts)..."
-apptainer exec --nv \
+apptainer exec --nv --writable-tmpfs \
     -B "$PROJECT_DIR":/app \
     --pwd /tmp \
     "$CONTAINER_IMG" \
     bash -c "
         set -e
+        echo 'Installing git temporarily...'
         
-        # Install git temporarily in the container session
-        apt-get update && apt-get install -y git
+        # Fix repository issues and install git
+        apt-get clean
+        apt-get update --fix-missing
+        apt-get install -y git --no-install-recommends
+        
+        echo 'Git installed:' \$(git --version)
         
         # Create isolated work directory
         WORK_DIR=/tmp/isolated_project_$$
@@ -49,25 +54,19 @@ apptainer exec --nv \
         
         # Copy project files
         cp /app/pyproject.toml .
-        cp /app/uv.lock . 2>/dev/null || true
+        cp /app/uv.lock . 2>/dev/null || echo 'No uv.lock found'
         
-        # Now uv sync will work with git dependencies
+        echo 'Creating virtual environment with NeMo...'
         export UV_CACHE_DIR=/tmp/uv_cache_$$
+        export PYTHONUNBUFFERED=1
+        
         uv sync --no-config
         
-        # Use --isolated flag to ignore any parent pyproject.toml files
-        uv sync --no-config
-        
-        echo 'Verifying installation...'
-        source .venv/bin/activate
-        python -c 'import sys; print(f\"Python: {sys.version}\")'
-        python -c 'import numpy; print(f\"NumPy: {numpy.__version__}\")' || echo 'NumPy not available'
-        python -c 'import matplotlib; print(f\"Matplotlib: {matplotlib.__version__}\")' || echo 'Matplotlib not available'
-        
-        echo 'Copying virtual environment back to project directory...'
+        echo 'Copying virtual environment back...'
         cp -r .venv /app/
+        cp uv.lock /app/ 2>/dev/null || true
         
-        # Cleanup
+        echo 'Cleaning up...'
         cd /tmp && rm -rf \$WORK_DIR && rm -rf /tmp/uv_cache_$$
     "
 
