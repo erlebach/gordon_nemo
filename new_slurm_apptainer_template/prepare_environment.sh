@@ -59,7 +59,7 @@ apptainer exec --nv \
         export PYTHONUNBUFFERED=1
         
         # Use --isolated flag to ignore any parent pyproject.toml files
-        uv sync --isolated
+        uv sync --no-config
         
         echo 'Verifying installation...'
         source .venv/bin/activate
