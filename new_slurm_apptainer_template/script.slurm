@@ -1,5 +1,4 @@
-#!/bin/bash
-
+#!/bin/bash -x
 #SBATCH --job-name=apptainer_python_job
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
@@ -9,6 +8,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32GB
 #SBATCH --time=01:00:00
+#SBATCH -A pilotgpu
 
 # --- 1. Get Python script from command-line argument ---
 if [ -z "$1" ]; then

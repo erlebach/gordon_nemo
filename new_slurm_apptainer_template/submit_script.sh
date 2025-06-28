@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 SCRIPT=$1
 PYTHON=$2
