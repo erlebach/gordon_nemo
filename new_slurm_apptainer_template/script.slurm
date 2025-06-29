@@ -25,13 +25,17 @@ export PIP_CACHE_DIR="$SCRATCH_CACHE/pip"
 export HF_HOME="$SCRATCH_CACHE/huggingface"
 export XDG_CACHE_HOME="$SCRATCH_CACHE"
 
-# --- 3. Set up paths ---
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# --- 3. Set up paths using SLURM_SUBMIT_DIR ---
+PROJECT_ROOT="$(dirname "$SLURM_SUBMIT_DIR")"  # Parent of submission directory
 SHARED_VENV="$PROJECT_ROOT/.venv"
 CONTAINER_IMAGE="$PROJECT_ROOT/new_slurm_apptainer_template/enhanced_nemo_container.sif"
 
+echo "Submit directory: $SLURM_SUBMIT_DIR"
+echo "Project root: $PROJECT_ROOT"
+echo "Shared environment: $SHARED_VENV"
+echo "Container image: $CONTAINER_IMAGE"
+
 # --- 4. Run the container with shared environment ---
-echo "Using shared environment: $SHARED_VENV"
 echo "Running: $PYTHON_SCRIPT"
 
 apptainer exec \
@@ -40,4 +44,4 @@ apptainer exec \
     --bind "$SHARED_VENV:$SHARED_VENV" \
     --bind "${TMPDIR:-/tmp}:${TMPDIR:-/tmp}" \
     "$CONTAINER_IMAGE" \
-    bash -c "source $SHARED_VENV/bin/activate && python $PYTHON_SCRIPT"
+    bash -c "cd $SLURM_SUBMIT_DIR && source $SHARED_VENV/bin/activate && python $PYTHON_SCRIPT"
