@@ -43,15 +43,15 @@ apptainer exec \
     "$CONTAINER_IMAGE" \
     bash -c "
         set -x
-		TMPDIR="/tmp/uvjob_${SLURM_JOB_ID:-$USER}"
-		mkdir -p "$TMPDIR"
-		cp "$PROJECT_ROOT/pyproject.toml" "$TMPDIR/"
-		cd "$TMPDIR"
-		uv venv
-		source .venv/bin/activate
-		uv pip install --upgrade pip
-		uv sync
+	#TMPDIR="/tmp/uvjob_${SLURM_JOB_ID:-$USER}"
+	TMPDIR="/tmp/gerlebacher"
+	mkdir -p "$TMPDIR"
+	cp "$PROJECT_ROOT/pyproject.toml" "$TMPDIR/"
+	cd "$TMPDIR"
+	uv venv
+	source .venv/bin/activate
+	uv pip install --upgrade pip
+	uv sync
         cd "$SLURM_SUBMIT_DIR"
-		python "$PYTHON_SCRIPT" "${SCRIPT_ARGS[@]}"
+	python "$PYTHON_SCRIPT" "${SCRIPT_ARGS[@]}"
     "
-
