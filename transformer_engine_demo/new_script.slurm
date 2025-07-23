@@ -51,7 +51,7 @@ apptainer exec \
 		source .venv/bin/activate
 		uv pip install --upgrade pip
 		uv sync
-		cd "$PROJECT_ROOT"
+        cd "$SLURM_SUBMIT_DIR"
 		python "$PYTHON_SCRIPT" "${SCRIPT_ARGS[@]}"
     "
 
