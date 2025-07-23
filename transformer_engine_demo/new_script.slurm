@@ -45,7 +45,7 @@ apptainer exec \
         set -x
 		TMPDIR="/tmp/uvjob_${SLURM_JOB_ID:-$USER}"
 		mkdir -p "$TMPDIR"
-		cp "$PROJECT_ROOT/../pyproject.toml" "$TMPDIR/"
+		cp "$PROJECT_ROOT/pyproject.toml" "$TMPDIR/"
 		cd "$TMPDIR"
 		uv venv
 		source .venv/bin/activate
