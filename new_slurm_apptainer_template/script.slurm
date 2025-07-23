@@ -27,7 +27,6 @@ export XDG_CACHE_HOME="$SCRATCH_CACHE"
 
 # --- 3. Set up paths using SLURM_SUBMIT_DIR ---
 PROJECT_ROOT="$(dirname "$SLURM_SUBMIT_DIR")"  # Parent of submission directory
-SHARED_VENV="$PROJECT_ROOT/.venv"
 CONTAINER_IMAGE="$HOME/containers/cuda_uv_12.sif"
 
 echo "Submit directory: $SLURM_SUBMIT_DIR"
@@ -35,13 +34,22 @@ echo "Project root: $PROJECT_ROOT"
 echo "Shared environment: $SHARED_VENV"
 echo "Container image: $CONTAINER_IMAGE"
 
-# --- 4. Run the container with shared environment ---
-echo "Running: $PYTHON_SCRIPT"
 
+# --- 4. Run the container and create a unique venv in /tmp ---
 apptainer exec \
     --nv \
     --bind "$PROJECT_ROOT:$PROJECT_ROOT" \
-    --bind "$SHARED_VENV:$SHARED_VENV" \
     --bind "${TMPDIR:-/tmp}:${TMPDIR:-/tmp}" \
     "$CONTAINER_IMAGE" \
-    bash -c "cd $SLURM_SUBMIT_DIR && source $SHARED_VENV/bin/activate && python $PYTHON_SCRIPT"
+    bash -c "
+        set -x
+        VENV_PATH=\"/tmp/myvenv_${SLURM_JOB_ID:-$USER}\"
+        python3 -m venv \"\$VENV_PATH\"
+        source \"\$VENV_PATH/bin/activate\"
+        cd ..
+        uv pip install  .
+        # uv pip install --upgrade pip
+        uv pip install transformer-engine nemo_toolkit
+        cd \"$PROJECT_ROOT\"
+        python \"$PYTHON_SCRIPT\" \"\${SCRIPT_ARGS[@]}\"
+    "
