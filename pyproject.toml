@@ -60,5 +60,5 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages=["multiblock_regression", "model_pt_test", "exp_lightning", "hello-world", "finetune", "nemo2-quickstart"]
+packages=["multiblock_regression", "model_pt_test", "exp_lightning", "hello-world", "finetune", "nemo2-quickstart", "transformer_engine_demo"]
 package-dir={"" = "."}
