@@ -32,7 +32,7 @@ export XDG_CACHE_HOME="$SCRATCH_CACHE"
 # --- 3. Set up paths using SLURM_SUBMIT_DIR ---
 PROJECT_ROOT="$SLURM_SUBMIT_DIR"
 echo "Project root: ${PROJECT_ROOT}"
-SHARED_VENV="$PROJECT_ROOT/.venv"
+SHARED_VENV="$PROJECT_ROOT/../.venv"
 CONTAINER_IMAGE="$HOME/containers/cuda_uv_12.sif"
 
 echo "Submit directory: $SLURM_SUBMIT_DIR"
