@@ -58,7 +58,15 @@ apptainer exec \
 	uv pip install "lightning>=2.2.1,<=2.4.0"
 	uv pip install transformers>=4.51.3
 	uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
-    pip install "transformer-engine[pytorch]"
+    # Set up build environment for transformer-engine
+    export NVTE_FRAMEWORK=pytorch
+    export NVTE_WITH_USERBUFFERS=0
+    export CUDA_HOME=/usr/local/cuda
+    export PATH="$CUDA_HOME/bin:$PATH"
+    export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
+    
+    # Install with explicit build flags
+    pip install "transformer-engine[pytorch]" --no-cache-dir --force-reinstall
     
     # Install apex after torch is available
     # uv pip install git+https://github.com/NVIDIA/apex.git --no-build-isolation 
