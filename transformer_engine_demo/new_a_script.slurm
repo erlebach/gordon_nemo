@@ -27,7 +27,7 @@ export XDG_CACHE_HOME="$SCRATCH_CACHE"
 
 # --- 3. Set up paths using SLURM_SUBMIT_DIR ---
 PROJECT_ROOT="$(dirname "$SLURM_SUBMIT_DIR")"  # Parent of submission directory
-CONTAINER_IMAGE="$HOME/containers/cuda_uv_12.sif"
+CONTAINER_IMAGE="$HOME/containers/cuda_uv_git_12.sif"
 
 echo "Submit directory: $SLURM_SUBMIT_DIR"
 echo "Project root: $PROJECT_ROOT"
