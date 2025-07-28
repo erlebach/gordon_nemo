@@ -55,7 +55,7 @@ apptainer exec \
     # Install core dependencies first to avoid platform issues
 	uv pip install torch>=2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 	uv pip install nemo-toolkit>=2.1.0
-	uv pip install lightning>2.2.1,<=2.4.0
+	uv pip install "lightning>=2.2.1,<=2.4.0"
 	uv pip install transformers>=4.51.3
 	uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
 	# Try to install remaining dependencies, but don'\''t fail on problematic ones
