@@ -58,7 +58,7 @@ apptainer exec \
 	uv pip install "lightning>=2.2.1,<=2.4.0"
 	uv pip install transformers>=4.51.3
 	uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
-    uv pip install "transformer-engine[pytorch]"
+    pip install "transformer-engine[pytorch]"
     
     # Install apex after torch is available
     # uv pip install git+https://github.com/NVIDIA/apex.git --no-build-isolation 
