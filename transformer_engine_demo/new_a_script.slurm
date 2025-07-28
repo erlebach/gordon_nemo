@@ -53,11 +53,11 @@ apptainer exec \
 	uv pip install --upgrade pip
 
     # Install core dependencies first to avoid platform issues
+	uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
 	uv pip install torch>=2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 	uv pip install nemo-toolkit>=2.1.0
 	uv pip install "lightning>=2.2.1,<=2.4.0"
 	uv pip install transformers>=4.51.3
-	uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
     # Set up build environment for transformer-engine
     export NVTE_FRAMEWORK=pytorch
     export NVTE_WITH_USERBUFFERS=0
