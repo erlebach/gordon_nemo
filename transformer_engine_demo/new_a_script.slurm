@@ -74,8 +74,11 @@ apptainer exec \
         export PATH="$CUDA_HOME/bin:$PATH"
         export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
         
-        # Install with explicit build flags
-        pip install "transformer-engine[pytorch]" --no-cache-dir --force-reinstall
+        # Install transformer-engine using pre-built wheel to avoid build issues
+        pip install "transformer-engine[pytorch]" --no-build-isolation --no-cache-dir --force-reinstall
+        
+        # Alternative: Try installing from NVIDIA's wheel index if the above fails
+        # pip install "transformer-engine[pytorch]" --index-url https://pypi.ngc.nvidia.com --no-cache-dir --force-reinstall
         
         # Install apex after torch is available
         # uv pip install git+https://github.com/NVIDIA/apex.git --no-build-isolation 
