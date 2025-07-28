@@ -58,8 +58,11 @@ apptainer exec \
 	uv pip install "lightning>=2.2.1,<=2.4.0"
 	uv pip install transformers>=4.51.3
 	uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
+    uv pip install apex --no-build-isolation
+    uv pip install transformer-engine
 	# Try to install remaining dependencies, but don'\''t fail on problematic ones
 	uv pip install -r <(grep -E "^[[:space:]]*\"[^\"]+>=" pyproject.toml | sed "s/^[[:space:]]*\"//;s/\",$//") || true
+    uv pip list
         cd "'"$SLURM_SUBMIT_DIR"'"
 	python "'"$PYTHON_SCRIPT"'" "${SCRIPT_ARGS[@]}"
     '
