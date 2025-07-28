@@ -42,19 +42,15 @@ apptainer exec \
     --bind "$PROJECT_ROOT:$PROJECT_ROOT" \
     --bind "${TMPDIR:-/tmp}:${TMPDIR:-/tmp}" \
     "$CONTAINER_IMAGE" \
-    bash -c "
+    bash -c '
         set -x
-	#TMPDIR="/tmp/uvjob_${SLURM_JOB_ID:-$USER}"
-	TMPDIR=\"/tmp/gerlebacher\"
-	mkdir -p \"$TMPDIR\"
-	cp \"$PROJECT_ROOT/pyproject.toml\" \"$TMPDIR/\"
-	cd \"$TMPDIR\"
+	TMPDIR="/tmp/gerlebacher"
+	mkdir -p "$TMPDIR"
+	cp "'"$PROJECT_ROOT"'/pyproject.toml" "$TMPDIR/"
+	cd "$TMPDIR"
 	uv venv
 	source .venv/bin/activate
 	uv pip install --upgrade pip
-	# uv sync
-    #     cd "$SLURM_SUBMIT_DIR"
-	# python "$PYTHON_SCRIPT" "${SCRIPT_ARGS[@]}"
 
     # Install core dependencies first to avoid platform issues
 	uv pip install torch>=2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
@@ -62,9 +58,8 @@ apptainer exec \
 	uv pip install lightning>2.2.1,<=2.4.0
 	uv pip install transformers>=4.51.3
 	uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
-	# Try to install remaining dependencies, but don't fail on problematic ones
+	# Try to install remaining dependencies, but don'\''t fail on problematic ones
 	uv pip install -r <(grep -E "^[[:space:]]*\"[^\"]+>=" pyproject.toml | sed "s/^[[:space:]]*\"//;s/\",$//") || true
-        cd \"$SLURM_SUBMIT_DIR\"
-	python \"$PYTHON_SCRIPT\" \"\${SCRIPT_ARGS[@]}\"
-
-    "
+        cd "'"$SLURM_SUBMIT_DIR"'"
+	python "'"$PYTHON_SCRIPT"'" "${SCRIPT_ARGS[@]}"
+    '
