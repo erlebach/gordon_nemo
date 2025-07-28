@@ -19,7 +19,7 @@ fi
 PYTHON_SCRIPT=$1
 
 # --- 2. Set up cache directories in scratch space ---
-SCRATCH_CACHE="${TMPDIR:-/tmp}/cache_${SLURM_JOB_ID}"
+SCRATCH_CACHE="/gpfs/research/scratch/gerlebacher/cache_${SLURM_JOB_ID}"
 export UV_CACHE_DIR="$SCRATCH_CACHE/uv"
 export PIP_CACHE_DIR="$SCRATCH_CACHE/pip"
 export HF_HOME="$SCRATCH_CACHE/huggingface"
@@ -31,48 +31,59 @@ CONTAINER_IMAGE="$HOME/containers/cuda_uv_git_12.sif"
 
 echo "Submit directory: $SLURM_SUBMIT_DIR"
 echo "Project root: $PROJECT_ROOT"
-echo "Shared environment: $SHARED_VENV"
 echo "Container image: $CONTAINER_IMAGE"
+echo "Using cache directory: $SCRATCH_CACHE"
 
 module load webproxy
 
-# --- 4. Run the container and create a unique venv in /tmp ---
+# --- 4. Run the container and create a unique venv in scratch space ---
 apptainer exec \
     --nv \
     --bind "$PROJECT_ROOT:$PROJECT_ROOT" \
-    --bind "${TMPDIR:-/tmp}:${TMPDIR:-/tmp}" \
+    --bind "/gpfs/research/scratch/gerlebacher:/gpfs/research/scratch/gerlebacher" \
     "$CONTAINER_IMAGE" \
     bash -c '
         set -x
-	TMPDIR="/tmp/gerlebacher"
-	mkdir -p "$TMPDIR"
-	cp "'"$PROJECT_ROOT"'/pyproject.toml" "$TMPDIR/"
-	cd "$TMPDIR"
-	uv venv
-	source .venv/bin/activate
-	uv pip install --upgrade pip
+        # Use scratch space for work directory
+        WORKDIR="/gpfs/research/scratch/gerlebacher/workdir_${SLURM_JOB_ID}"
+        mkdir -p "$WORKDIR"
+        cp "'"$PROJECT_ROOT"'/pyproject.toml" "$WORKDIR/"
+        cd "$WORKDIR"
+        
+        # Set environment variables to use scratch space
+        export TMPDIR="/gpfs/research/scratch/gerlebacher/tmp_${SLURM_JOB_ID}"
+        export UV_CACHE_DIR="'"$SCRATCH_CACHE"'/uv"
+        export PIP_CACHE_DIR="'"$SCRATCH_CACHE"'/pip"
+        mkdir -p "$TMPDIR" "$UV_CACHE_DIR" "$PIP_CACHE_DIR"
+        
+        uv venv
+        source .venv/bin/activate
+        uv pip install --upgrade pip
 
-    # Install core dependencies first to avoid platform issues
-	uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
-	uv pip install torch>=2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-	uv pip install nemo-toolkit>=2.1.0
-	uv pip install "lightning>=2.2.1,<=2.4.0"
-	uv pip install transformers>=4.51.3
-    # Set up build environment for transformer-engine
-    export NVTE_FRAMEWORK=pytorch
-    export NVTE_WITH_USERBUFFERS=0
-    export CUDA_HOME=/usr/local/cuda
-    export PATH="$CUDA_HOME/bin:$PATH"
-    export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
-    
-    # Install with explicit build flags
-    pip install "transformer-engine[pytorch]" --no-cache-dir --force-reinstall
-    
-    # Install apex after torch is available
-    # uv pip install git+https://github.com/NVIDIA/apex.git --no-build-isolation 
-	# Try to install remaining dependencies, but don'\''t fail on problematic ones
-	uv pip install -r <(grep -E "^[[:space:]]*\"[^\"]+>=" pyproject.toml | sed "s/^[[:space:]]*\"//;s/\",$//") || true
-    uv pip list
+        # Install core dependencies first to avoid platform issues
+        uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
+        uv pip install torch>=2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+        uv pip install nemo-toolkit>=2.1.0
+        uv pip install "lightning>=2.2.1,<=2.4.0"
+        uv pip install transformers>=4.51.3
+        
+        # Set up build environment for transformer-engine
+        export NVTE_FRAMEWORK=pytorch
+        export NVTE_WITH_USERBUFFERS=0
+        export CUDA_HOME=/usr/local/cuda
+        export PATH="$CUDA_HOME/bin:$PATH"
+        export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
+        
+        # Install with explicit build flags
+        pip install "transformer-engine[pytorch]" --no-cache-dir --force-reinstall
+        
+        # Install apex after torch is available
+        # uv pip install git+https://github.com/NVIDIA/apex.git --no-build-isolation 
+        
+        # Try to install remaining dependencies, but don'\''t fail on problematic ones
+        uv pip install -r <(grep -E "^[[:space:]]*\"[^\"]+>=" pyproject.toml | sed "s/^[[:space:]]*\"//;s/\",$//") || true
+        uv pip list
+        
         cd "'"$SLURM_SUBMIT_DIR"'"
-	python "'"$PYTHON_SCRIPT"'" "${SCRIPT_ARGS[@]}"
+        python "'"$PYTHON_SCRIPT"'" "${SCRIPT_ARGS[@]}"
     '

@@ -17,23 +17,14 @@ From: /gpfs/home/gerlebacher/containers/cuda_nvidia_12.sif  # Base image pulled 
 
     # Ensure uv from pip is in PATH if installed to ~/.local/bin
     export PATH="/root/.local/bin:$PATH"
-    
-    # Set CUDA paths
-    export CUDA_HOME=/usr/local/cuda
-    export PATH="$CUDA_HOME/bin:$PATH"
-    export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
 
 # Executed during build
 %post
-    echo "Updating package list and installing pip, git, and CUDA dev tools..."
-    apt-get update && apt-get install -y python3-pip git cuda-toolkit-12-1 && apt-get clean
+    echo "Updating package list and installing pip and git..."
+    apt-get update && apt-get install -y python3-pip git && apt-get clean
 
     echo "Upgrading pip and installing uv..."
     python3 -m pip install --upgrade pip
     python3 -m pip install uv
-    
-    echo "Installing transformer-engine in container..."
-    python3 -m pip install torch
-    python3 -m pip install "transformer-engine[pytorch]"
 
     echo "Environment setup complete."
