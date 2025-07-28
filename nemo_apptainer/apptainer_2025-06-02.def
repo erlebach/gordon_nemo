@@ -1,4 +1,6 @@
 # to use environment variables, create this file dynamically, e.g. cat > file.def << EOF.
+# Add uv and git 
+
 Bootstrap: localimage
 From: /gpfs/home/gerlebacher/containers/cuda_nvidia_12.sif  # Base image pulled from nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
@@ -7,7 +9,7 @@ From: /gpfs/home/gerlebacher/containers/cuda_nvidia_12.sif  # Base image pulled 
     Version 1.0
     Description CUDA 12.1.1 runtime + Python + uv, for NeMo training
 
-# Run during execution
+# Executed during execution
 %environment
     # Locale settings for UTF-8 compatibility in logs, file handling, etc.
     export LC_ALL=C.UTF-8
@@ -18,8 +20,8 @@ From: /gpfs/home/gerlebacher/containers/cuda_nvidia_12.sif  # Base image pulled 
 
 # Executed during build
 %post
-    echo "Updating package list and installing pip..."
-    apt-get update && apt-get install -y python3-pip && apt-get clean
+    echo "Updating package list and installing pip and git..."
+    apt-get update && apt-get install -y python3-pip git && apt-get clean
 
     echo "Upgrading pip and installing uv..."
     python3 -m pip install --upgrade pip
