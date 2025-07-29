@@ -92,11 +92,12 @@ def create_sliding_window_transformer(
     use_fp8 = True
 
     # Create TransformerLayer with sliding window attention
+    # Some functions use self_attn_mask_type, and other use attn_mask_type
     layer = te.TransformerLayer(
         hidden_size=hidden_size,
         ffn_hidden_size=hidden_size * 4,
         num_attention_heads=num_attention_heads,
-        attn_mask_type="causal",  # Enables sliding window
+        self_attn_mask_type="causal",  # Enables sliding window
         window_size=(window_size, window_size),
         transformer_engine=True,
         fp8=use_fp8,
