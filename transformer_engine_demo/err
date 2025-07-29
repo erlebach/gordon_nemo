@@ -8,22 +8,18 @@ Shell debugging restarted
 + unset __lmod_vx
 + '[' -z simple_demo.py ']'
 + PYTHON_SCRIPT=simple_demo.py
-+ SCRATCH_CACHE=/gpfs/research/scratch/gerlebacher/cache_11175294
-+ export UV_CACHE_DIR=/gpfs/research/scratch/gerlebacher/cache_11175294/uv
-+ UV_CACHE_DIR=/gpfs/research/scratch/gerlebacher/cache_11175294/uv
-+ export PIP_CACHE_DIR=/gpfs/research/scratch/gerlebacher/cache_11175294/pip
-+ PIP_CACHE_DIR=/gpfs/research/scratch/gerlebacher/cache_11175294/pip
-+ export HF_HOME=/gpfs/research/scratch/gerlebacher/cache_11175294/huggingface
-+ HF_HOME=/gpfs/research/scratch/gerlebacher/cache_11175294/huggingface
-+ export XDG_CACHE_HOME=/gpfs/research/scratch/gerlebacher/cache_11175294
-+ XDG_CACHE_HOME=/gpfs/research/scratch/gerlebacher/cache_11175294
++ SCRATCH_CACHE=/gpfs/research/scratch/gerlebacher/cache_11177468
++ export HF_HOME=/gpfs/research/scratch/gerlebacher/cache_11177468/huggingface
++ HF_HOME=/gpfs/research/scratch/gerlebacher/cache_11177468/huggingface
++ export XDG_CACHE_HOME=/gpfs/research/scratch/gerlebacher/cache_11177468
++ XDG_CACHE_HOME=/gpfs/research/scratch/gerlebacher/cache_11177468
 ++ dirname /gpfs/home/gerlebacher/src/gordon_nemo/transformer_engine_demo
 + PROJECT_ROOT=/gpfs/home/gerlebacher/src/gordon_nemo
-+ CONTAINER_IMAGE=/gpfs/home/gerlebacher/containers/cuda_uv_git_12.sif
++ CONTAINER_IMAGE=/gpfs/research/scratch/gerlebacher/containers/nemo_25.07.00.sif
 + echo 'Submit directory: /gpfs/home/gerlebacher/src/gordon_nemo/transformer_engine_demo'
 + echo 'Project root: /gpfs/home/gerlebacher/src/gordon_nemo'
-+ echo 'Container image: /gpfs/home/gerlebacher/containers/cuda_uv_git_12.sif'
-+ echo 'Using cache directory: /gpfs/research/scratch/gerlebacher/cache_11175294'
++ echo 'Container image: /gpfs/research/scratch/gerlebacher/containers/nemo_25.07.00.sif'
++ echo 'Using cache directory: /gpfs/research/scratch/gerlebacher/cache_11177468'
 + module load webproxy
 + '[' -z '' ']'
 + case "$-" in
@@ -34,288 +30,36 @@ Shell debugging temporarily silenced: export LMOD_SH_DBG_ON=1 for Lmod's output
 Shell debugging restarted
 + unset __lmod_sh_dbg
 + return 0
-+ apptainer exec --nv --bind /gpfs/home/gerlebacher/src/gordon_nemo:/gpfs/home/gerlebacher/src/gordon_nemo --bind /gpfs/research/scratch/gerlebacher:/gpfs/research/scratch/gerlebacher /gpfs/home/gerlebacher/containers/cuda_uv_git_12.sif bash -c '
++ apptainer exec --nv --bind /gpfs/home/gerlebacher/src/gordon_nemo:/gpfs/home/gerlebacher/src/gordon_nemo --bind /gpfs/research/scratch/gerlebacher:/gpfs/research/scratch/gerlebacher /gpfs/research/scratch/gerlebacher/containers/nemo_25.07.00.sif bash -c '
         set -x
-        # Use scratch space for work directory
-        WORKDIR="/gpfs/research/scratch/gerlebacher/workdir_${SLURM_JOB_ID}"
-        mkdir -p "$WORKDIR"
-        cp "/gpfs/home/gerlebacher/src/gordon_nemo/pyproject.toml" "$WORKDIR/"
-        cd "$WORKDIR"
-        
         # Set environment variables to use scratch space
         export TMPDIR="/gpfs/research/scratch/gerlebacher/tmp_${SLURM_JOB_ID}"
-        export UV_CACHE_DIR="/gpfs/research/scratch/gerlebacher/cache_11175294/uv"
-        export PIP_CACHE_DIR="/gpfs/research/scratch/gerlebacher/cache_11175294/pip"
-        mkdir -p "$TMPDIR" "$UV_CACHE_DIR" "$PIP_CACHE_DIR"
+        export HF_HOME="/gpfs/research/scratch/gerlebacher/cache_11177468/huggingface"
+        export XDG_CACHE_HOME="/gpfs/research/scratch/gerlebacher/cache_11177468"
+        mkdir -p "$TMPDIR" "$HF_HOME"
         
-        uv venv
-        source .venv/bin/activate
-        uv pip install --upgrade pip
-
-        # Install core dependencies first to avoid platform issues
-        uv pip install numpy>=2.2.6 jaxtyping>=0.3.2
-        uv pip install torch>=2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-        uv pip install nemo-toolkit>=2.1.0
-        uv pip install "lightning>=2.2.1,<=2.4.0"
-        uv pip install transformers>=4.51.3
-        
-        # Set up build environment for transformer-engine
-        export NVTE_FRAMEWORK=pytorch
-        export NVTE_WITH_USERBUFFERS=0
-        export CUDA_HOME=/usr/local/cuda
-        export PATH="$CUDA_HOME/bin:$PATH"
-        export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
-        
-        # Install with explicit build flags
-        pip install "transformer-engine[pytorch]" --no-cache-dir --force-reinstall
-        
-        # Install apex after torch is available
-        # uv pip install git+https://github.com/NVIDIA/apex.git --no-build-isolation 
-        
-        # Try to install remaining dependencies, but don'\''t fail on problematic ones
-        uv pip install -r <(grep -E "^[[:space:]]*\"[^\"]+>=" pyproject.toml | sed "s/^[[:space:]]*\"//;s/\",$//") || true
-        uv pip list
-        
+        # Change to the submit directory and run the Python script
         cd "/gpfs/home/gerlebacher/src/gordon_nemo/transformer_engine_demo"
         python "simple_demo.py" "${SCRIPT_ARGS[@]}"
     '
-INFO:    underlay of /etc/localtime required more than 50 (91) bind mounts
-INFO:    underlay of /usr/bin/nvidia-smi required more than 50 (425) bind mounts
-+ WORKDIR=/gpfs/research/scratch/gerlebacher/workdir_11175294
-+ mkdir -p /gpfs/research/scratch/gerlebacher/workdir_11175294
-+ cp /gpfs/home/gerlebacher/src/gordon_nemo/pyproject.toml /gpfs/research/scratch/gerlebacher/workdir_11175294/
-+ cd /gpfs/research/scratch/gerlebacher/workdir_11175294
-+ export TMPDIR=/gpfs/research/scratch/gerlebacher/tmp_11175294
-+ TMPDIR=/gpfs/research/scratch/gerlebacher/tmp_11175294
-+ export UV_CACHE_DIR=/gpfs/research/scratch/gerlebacher/cache_11175294/uv
-+ UV_CACHE_DIR=/gpfs/research/scratch/gerlebacher/cache_11175294/uv
-+ export PIP_CACHE_DIR=/gpfs/research/scratch/gerlebacher/cache_11175294/pip
-+ PIP_CACHE_DIR=/gpfs/research/scratch/gerlebacher/cache_11175294/pip
-+ mkdir -p /gpfs/research/scratch/gerlebacher/tmp_11175294 /gpfs/research/scratch/gerlebacher/cache_11175294/uv /gpfs/research/scratch/gerlebacher/cache_11175294/pip
-+ uv venv
-Using CPython 3.12.10
-Creating virtual environment at: .venv
-Activate with: source .venv/bin/activate
-+ source .venv/bin/activate
-++ '[' -z '' ']'
-++ '[' -n x ']'
-++ SCRIPT_PATH=.venv/bin/activate
-++ '[' .venv/bin/activate = /usr/bin/bash ']'
-++ deactivate nondestructive
-++ unset -f pydoc
-++ '[' -z '' ']'
-++ '[' -z '' ']'
-++ hash -r
-++ '[' -z '' ']'
-++ unset VIRTUAL_ENV
-++ unset VIRTUAL_ENV_PROMPT
-++ '[' '!' nondestructive = nondestructive ']'
-++ VIRTUAL_ENV=/gpfs/research/scratch/gerlebacher/workdir_11175294/.venv
-++ '[' linux-gnu = cygwin ']'
-++ '[' linux-gnu = msys ']'
-++ export VIRTUAL_ENV
-++ '[' -z '' ']'
-++ unset SCRIPT_PATH
-++ _OLD_VIRTUAL_PATH=/root/.local/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-++ PATH=/gpfs/research/scratch/gerlebacher/workdir_11175294/.venv/bin:/root/.local/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-++ export PATH
-++ '[' xworkdir_11175294 '!=' x ']'
-++ VIRTUAL_ENV_PROMPT=workdir_11175294
-++ export VIRTUAL_ENV_PROMPT
-++ '[' -z '' ']'
-++ '[' -z '' ']'
-++ _OLD_VIRTUAL_PS1=
-++ PS1='(workdir_11175294) '
-++ export PS1
-++ alias pydoc
-++ true
-++ hash -r
-+ uv pip install --upgrade pip
-Resolved 1 package in 135ms
-Downloading pip (1.7MiB)
- Downloading pip
-Prepared 1 package in 626ms
-Installed 1 package in 158ms
- + pip==25.1.1
-+ uv pip install numpy jaxtyping
-Resolved 3 packages in 170ms
-Downloading numpy (15.9MiB)
- Downloading numpy
-Prepared 3 packages in 1.91s
-Installed 3 packages in 257ms
- + jaxtyping==0.3.2
- + numpy==2.3.2
- + wadler-lindig==0.1.7
-+ uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-Resolved 27 packages in 1.15s
-Downloading nvidia-cuda-cupti-cu12 (13.5MiB)
-Downloading sympy (5.9MiB)
-Downloading nvidia-curand-cu12 (53.9MiB)
-Downloading nvidia-cuda-nvrtc-cu12 (22.6MiB)
-Downloading torchaudio (3.3MiB)
-Downloading networkx (1.6MiB)
-Downloading pillow (4.2MiB)
-Downloading nvidia-cudnn-cu12 (634.0MiB)
-Downloading nvidia-cufft-cu12 (116.0MiB)
-Downloading nvidia-nccl-cu12 (179.9MiB)
-Downloading nvidia-cusparse-cu12 (186.9MiB)
-Downloading torch (744.2MiB)
-Downloading nvidia-cublas-cu12 (391.6MiB)
-Downloading nvidia-cusolver-cu12 (118.4MiB)
-Downloading torchvision (6.9MiB)
-Downloading triton (199.8MiB)
-Downloading nvidia-nvjitlink-cu12 (18.8MiB)
- Downloading torchaudio
- Downloading pillow
- Downloading networkx
- Downloading torchvision
- Downloading nvidia-nvjitlink-cu12
- Downloading nvidia-cuda-cupti-cu12
- Downloading nvidia-cuda-nvrtc-cu12
- Downloading sympy
- Downloading nvidia-curand-cu12
- Downloading nvidia-cufft-cu12
- Downloading nvidia-cusolver-cu12
- Downloading nvidia-nccl-cu12
- Downloading nvidia-cusparse-cu12
- Downloading triton
- Downloading nvidia-cublas-cu12
- Downloading nvidia-cudnn-cu12
- Downloading torch
-Prepared 26 packages in 41.21s
-Installed 26 packages in 16.19s
- + filelock==3.13.1
- + fsspec==2024.6.1
- + jinja2==3.1.4
- + markupsafe==2.1.5
- + mpmath==1.3.0
- + networkx==3.3
- + nvidia-cublas-cu12==12.1.3.1
- + nvidia-cuda-cupti-cu12==12.1.105
- + nvidia-cuda-nvrtc-cu12==12.1.105
- + nvidia-cuda-runtime-cu12==12.1.105
- + nvidia-cudnn-cu12==9.1.0.70
- + nvidia-cufft-cu12==11.0.2.54
- + nvidia-curand-cu12==10.3.2.106
- + nvidia-cusolver-cu12==11.4.5.107
- + nvidia-cusparse-cu12==12.1.0.106
- + nvidia-nccl-cu12==2.21.5
- + nvidia-nvjitlink-cu12==12.1.105
- + nvidia-nvtx-cu12==12.1.105
- + pillow==11.0.0
- + setuptools==70.2.0
- + sympy==1.13.1
- + torch==2.5.1+cu121
- + torchaudio==2.5.1+cu121
- + torchvision==0.20.1+cu121
- + triton==3.1.0
- + typing-extensions==4.12.2
-+ uv pip install nemo-toolkit
-Resolved 57 packages in 6.18s
-   Building wget==3.2
-Downloading tensorboard (5.3MiB)
-Downloading hf-xet (3.0MiB)
-Downloading onnx (16.8MiB)
-Downloading tensorboard-data-server (6.3MiB)
-Downloading grpcio (5.9MiB)
-Downloading nemo-toolkit (6.9MiB)
-Downloading scipy (33.5MiB)
-Downloading scikit-learn (9.0MiB)
-Downloading numba (3.7MiB)
-Downloading numpy (15.8MiB)
-Downloading llvmlite (40.4MiB)
-      Built wget==3.2
- Downloading hf-xet
- Downloading numba
- Downloading tensorboard
- Downloading grpcio
- Downloading tensorboard-data-server
- Downloading scikit-learn
- Downloading numpy
- Downloading scipy
- Downloading llvmlite
- Downloading nemo-toolkit
- Downloading onnx
-Prepared 34 packages in 14.00s
-Uninstalled 2 packages in 5.14s
-Installed 34 packages in 23.36s
- + absl-py==2.3.1
- + certifi==2025.7.14
- + charset-normalizer==3.4.2
- - fsspec==2024.6.1
- + fsspec==2024.12.0
- + grpcio==1.74.0
- + hf-xet==1.1.5
- + huggingface-hub==0.34.2
- + idna==3.10
- + joblib==1.5.1
- + llvmlite==0.44.0
- + markdown==3.8.2
- + nemo-toolkit==2.4.0
- + numba==0.61.2
- - numpy==2.3.2
- + numpy==2.2.6
- + onnx==1.18.0
- + packaging==25.0
- + protobuf==5.29.5
- + python-dateutil==2.9.0.post0
- + pyyaml==6.0.2
- + requests==2.32.4
- + ruamel-yaml==0.18.14
- + ruamel-yaml-clib==0.2.12
- + scikit-learn==1.7.1
- + scipy==1.16.1
- + six==1.17.0
- + tensorboard==2.20.0
- + tensorboard-data-server==0.7.2
- + text-unidecode==1.3
- + threadpoolctl==3.6.0
- + tqdm==4.67.1
- + urllib3==2.5.0
- + werkzeug==3.1.3
- + wget==3.2
- + wrapt==1.17.2
-+ uv pip install 'lightning>=2.2.1,<=2.4.0'
-Resolved 40 packages in 723ms
-Downloading aiohttp (1.6MiB)
- Downloading aiohttp
-Prepared 13 packages in 808ms
-Uninstalled 1 package in 119ms
-Installed 13 packages in 153ms
- + aiohappyeyeballs==2.6.1
- + aiohttp==3.12.14
- + aiosignal==1.4.0
- + attrs==25.3.0
- + frozenlist==1.7.0
- + lightning==2.4.0
- + lightning-utilities==0.15.0
- + multidict==6.6.3
- - packaging==25.0
- + packaging==24.2
- + propcache==0.3.2
- + pytorch-lightning==2.5.2
- + torchmetrics==1.8.0
- + yarl==1.20.1
-+ uv pip install transformers
-Resolved 18 packages in 332ms
-Downloading transformers (10.7MiB)
-Downloading tokenizers (3.0MiB)
- Downloading tokenizers
- Downloading transformers
-Prepared 4 packages in 3.06s
-Installed 4 packages in 684ms
- + regex==2024.11.6
- + safetensors==0.5.3
- + tokenizers==0.21.4
- + transformers==4.54.0
-+ export NVTE_FRAMEWORK=pytorch
-+ NVTE_FRAMEWORK=pytorch
-+ export NVTE_WITH_USERBUFFERS=0
-+ NVTE_WITH_USERBUFFERS=0
-+ export CUDA_HOME=/usr/local/cuda
-+ CUDA_HOME=/usr/local/cuda
-+ export PATH=/usr/local/cuda/bin:/gpfs/research/scratch/gerlebacher/workdir_11175294/.venv/bin:/root/.local/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-+ PATH=/usr/local/cuda/bin:/gpfs/research/scratch/gerlebacher/workdir_11175294/.venv/bin:/root/.local/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-+ export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/.singularity.d/libs
-+ LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/.singularity.d/libs
-+ pip install 'transformer-engine[pytorch]' --no-cache-dir --force-reinstall
+INFO:    underlay of /usr/bin/nvidia-smi required more than 50 (485) bind mounts
+15:4: not a valid test operator:  
+15:4: not a valid test operator: 12.9
+21:4: not a valid test operator: (
+21:4: not a valid test operator: 530.30.02
++ export TMPDIR=/gpfs/research/scratch/gerlebacher/tmp_11177468
++ TMPDIR=/gpfs/research/scratch/gerlebacher/tmp_11177468
++ export HF_HOME=/gpfs/research/scratch/gerlebacher/cache_11177468/huggingface
++ HF_HOME=/gpfs/research/scratch/gerlebacher/cache_11177468/huggingface
++ export XDG_CACHE_HOME=/gpfs/research/scratch/gerlebacher/cache_11177468
++ XDG_CACHE_HOME=/gpfs/research/scratch/gerlebacher/cache_11177468
++ mkdir -p /gpfs/research/scratch/gerlebacher/tmp_11177468 /gpfs/research/scratch/gerlebacher/cache_11177468/huggingface
++ cd /gpfs/home/gerlebacher/src/gordon_nemo/transformer_engine_demo
++ python simple_demo.py
+[NeMo W 2025-07-29 12:13:45 nemo_logging:405] /usr/local/lib/python3.12/dist-packages/pydub/utils.py:170: RuntimeWarning: Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work
+      warn("Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work", RuntimeWarning)
+    
+Traceback (most recent call last):
+  File "/gpfs/home/gerlebacher/src/gordon_nemo/transformer_engine_demo/simple_demo.py", line 62, in <module>
+    raise ImportError("Transformer Engine is not installed or not found.")
+ImportError: Transformer Engine is not installed or not found.
