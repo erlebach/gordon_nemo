@@ -100,7 +100,7 @@ def create_sliding_window_transformer(
         self_attn_mask_type="causal",  # Enables sliding window
         window_size=(window_size, window_size),
         # transformer_engine=True,
-        fp8=use_fp8,
+        # fp8=use_fp8,
     ).cuda()
 
     # Forward pass
