@@ -89,14 +89,15 @@ def create_sliding_window_transformer(
     """
     # Dummy input
     x = torch.randn(seq_length, 1, hidden_size).cuda()
+    use_fp8 = True
 
     # Create TransformerLayer with sliding window attention
     layer = te.TransformerLayer(
         hidden_size=hidden_size,
         ffn_hidden_size=hidden_size * 4,
         num_attention_heads=num_attention_heads,
-        attn_mask_type="local",  # Enables sliding window
-        window_size=window_size,
+        attn_mask_type="causal",  # Enables sliding window
+        window_size=(window_size, window_size),
         transformer_engine=True,
         fp8=use_fp8,
     ).cuda()
