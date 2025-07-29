@@ -25,7 +25,7 @@ export XDG_CACHE_HOME="$SCRATCH_CACHE"
 
 # --- 3. Set up paths using SLURM_SUBMIT_DIR ---
 PROJECT_ROOT="$(dirname "$SLURM_SUBMIT_DIR")"  # Parent of submission directory
-CONTAINER_IMAGE="/gpfs/research/scratch/gerlebacher/container/nemo_25.07.00.sif"
+CONTAINER_IMAGE="/gpfs/research/scratch/gerlebacher/containers/nemo_25.07.00.sif"
 
 echo "Submit directory: $SLURM_SUBMIT_DIR"
 echo "Project root: $PROJECT_ROOT"
