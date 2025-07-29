@@ -1,4 +1,4 @@
-""" 
+"""
 To create a **Minimal Working Example (MWE)** that demonstrates a **NVIDIA NeMo-enhanced Transformer** using **Transformer Engine** with **sliding window attention**, here’s a step-by-step guide and a code sample. This will use NeMo’s integration with Transformer Engine and show how to configure sliding window attention.
 
 ---
@@ -52,14 +52,18 @@ Below is a minimal script using NeMo’s `nemo.collections.nlp.modules.common.me
 
 **Let me know if you want a full training loop, dataset integration, or a multi-layer transformer example!**
 """
+
 import torch
-from nemo.collections.nlp.modules.common.megatron.transformer import TransformerLayer
-from nemo.collections.nlp.modules.common.megatron.utils import ApexGuardDefaults
 
 # Ensure Transformer Engine is available
-apex_guard = ApexGuardDefaults()
-if not apex_guard.has_transformer_engine:
+try:
+    import transformer_engine
+
+    print(f"✓ Transformer Engine {transformer_engine.__version__} is available")
+except ImportError:
     raise ImportError("Transformer Engine is not installed or not found.")
+
+from nemo.collections.nlp.modules.common.megatron.transformer import TransformerLayer
 
 
 def create_sliding_window_transformer(
