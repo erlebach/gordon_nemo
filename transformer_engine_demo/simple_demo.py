@@ -63,6 +63,7 @@ try:
 except ImportError:
     raise ImportError("Transformer Engine is not installed or not found.")
 
+import transformer_engine.pytorch as te
 from nemo.collections.nlp.modules.common.megatron.transformer import TransformerLayer
 
 
@@ -90,11 +91,10 @@ def create_sliding_window_transformer(
     x = torch.randn(seq_length, 1, hidden_size).cuda()
 
     # Create TransformerLayer with sliding window attention
-    layer = TransformerLayer(
+    layer = te.TransformerLayer(
         hidden_size=hidden_size,
         ffn_hidden_size=hidden_size * 4,
         num_attention_heads=num_attention_heads,
-        attention_type="scaled_dot_product",
         attn_mask_type="local",  # Enables sliding window
         window_size=window_size,
         transformer_engine=True,
